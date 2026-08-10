@@ -1,0 +1,6 @@
+{
+  "name": "Lock-In Routine & Task Scheduler",
+  "description": "High-performance routine tracker, pillar manager, time-blocked scheduler, momentum analytics, and AI routine generator.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
