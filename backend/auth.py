@@ -1,15 +1,21 @@
 import os
 import httpx
+from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from backend.database import get_db
 from backend.models import User, Pillar, Task, Routine
 
+load_dotenv(".env.local")
+load_dotenv()
+
 security = HTTPBearer()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL") or os.getenv("VITE_SUPABASE_URL") or ""
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY") or os.getenv("VITE_SUPABASE_ANON_KEY") or ""
+SUPABASE_HOST = SUPABASE_URL.rstrip("/").replace("https://", "").replace("http://", "")
+
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -23,61 +29,63 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user_id = None
-    email = None
-    name = "Lock-In Operator"
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Auth service is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY environment variables.",
+        )
 
-    # Verify token with Supabase Auth API if credentials are provided and token is a Supabase token
-    is_local_token = token.startswith("demo_token_") or ":" in token or token.startswith("usr_")
-    if SUPABASE_URL and SUPABASE_ANON_KEY and not is_local_token:
-        auth_url = f"{SUPABASE_URL.rstrip('/')}/auth/v1/user"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "apikey": SUPABASE_ANON_KEY,
-        }
-        try:
-            async with httpx.AsyncClient() as client:
-                res = await client.get(auth_url, headers=headers, timeout=5.0)
-                if res.status_code == 200:
-                    data = res.json()
-                    user_id = data.get("id")
-                    email = data.get("email")
-                    metadata = data.get("user_metadata", {})
-                    name = metadata.get("name") or metadata.get("full_name") or (email.split("@")[0] if email else "Lock-In Operator")
-                else:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Invalid or expired authentication token",
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-        except httpx.RequestError:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Unable to connect to Auth service",
-            )
-    else:
-        # Fallback for demo tokens or local tokens without Supabase credentials
-        if token.startswith("demo_token_"):
-            user_id = "demo_user_123"
-            email = "demo@lockin.app"
-            name = "Lock-In Operator (Demo)"
-        elif ":" in token:
-            parts = token.split(":")
-            user_id = parts[0]
-            email = parts[1] if len(parts) > 1 else f"{user_id}@lockin.app"
-            name = email.split("@")[0].title()
-        else:
-            user_id = token if token.startswith("usr_") else f"user_{token[:16]}"
-            email = f"{user_id}@lockin.app"
-            name = "Lock-In Operator"
+    # Verify Supabase access token via Supabase Auth REST API
+    auth_url = f"{SUPABASE_URL.rstrip('/')}/auth/v1/user"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "apikey": SUPABASE_ANON_KEY,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+            res = await client.get(auth_url, headers=headers, timeout=10.0)
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "FastAPI could not reach Supabase Auth to verify your session. "
+                f"Target: {SUPABASE_HOST or 'missing SUPABASE_URL'}. "
+                "Check that SUPABASE_URL/SUPABASE_ANON_KEY are set on the backend, "
+                "the backend process has internet access, and the Supabase project is reachable. "
+                f"Technical detail: {type(e).__name__}: {str(e)}"
+            ),
+        )
+
+    if res.status_code != 200:
+        response_text = res.text[:300]
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=(
+                "FastAPI reached Supabase Auth, but Supabase rejected the access token. "
+                "Please sign in again. "
+                f"Supabase status: {res.status_code}. Response: {response_text}"
+            ),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    data = res.json()
+    user_id = data.get("id")
+    email = data.get("email")
+    metadata = data.get("user_metadata", {})
+    name = (
+        metadata.get("name")
+        or metadata.get("full_name")
+        or (email.split("@")[0] if email else "Lock-In Operator")
+    )
 
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not verify user identity from token",
+            detail="Could not extract user identity from Supabase token.",
         )
 
-    # Fetch user from SQLAlchemy database or create initial default profile if new user
+    # Fetch or create user record in the database
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         user = User(
@@ -100,6 +108,7 @@ async def get_current_user(
         seed_user_defaults(db, user_id)
 
     return user
+
 
 def seed_user_defaults(db: Session, user_id: str):
     p1 = Pillar(id=f"p1_{user_id}", user_id=user_id, name="Physical Mastery", icon="💪", color="#3ECF8E", daily_goal="Workout / 160g Protein")

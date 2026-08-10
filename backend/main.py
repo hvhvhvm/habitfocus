@@ -1,14 +1,11 @@
 import os
-import json
-import uuid
-from typing import List
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from backend.database import engine, get_db, Base
 from backend.models import User, Pillar, Task, Routine, ProteinLog
-from backend.auth import get_current_user, seed_user_defaults
+from backend.auth import get_current_user
 from backend import schemas
 
 # Create database tables automatically upon startup
@@ -29,98 +26,8 @@ def health_check():
     return {"status": "ok", "backend": "FastAPI + SQLAlchemy + Supabase"}
 
 # --- AUTH & USER PROFILE ENDPOINTS ---
-@app.post("/api/auth/login")
-def auth_login(
-    req: schemas.AuthLogin,
-    db: Session = Depends(get_db)
-):
-    email = req.email.strip().lower()
-    if not email:
-        raise HTTPException(status_code=400, detail="Email is required")
-    
-    user = db.query(User).filter(User.email == email).first()
-    if not user:
-        user_id = f"usr_{uuid.uuid4().hex[:12]}"
-        user = User(
-            id=user_id,
-            email=email,
-            name=email.split("@")[0].title(),
-            avatar="⚡",
-            day_number=1,
-            streak_days=1,
-            total_days_goal=90,
-            current_level=4,
-            points=1250,
-            protein_goal=160
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        seed_user_defaults(db, user_id)
-
-    token = f"{user.id}:{user.email}"
-    return {"user": user.to_dict(), "token": token}
-
-@app.post("/api/auth/register")
-def auth_register(
-    req: schemas.AuthRegister,
-    db: Session = Depends(get_db)
-):
-    email = req.email.strip().lower()
-    name = req.name.strip() or email.split("@")[0].title()
-    if not email:
-        raise HTTPException(status_code=400, detail="Email is required")
-
-    existing_user = db.query(User).filter(User.email == email).first()
-    if existing_user:
-        token = f"{existing_user.id}:{existing_user.email}"
-        return {"user": existing_user.to_dict(), "token": token}
-
-    user_id = f"usr_{uuid.uuid4().hex[:12]}"
-    user = User(
-        id=user_id,
-        email=email,
-        name=name,
-        avatar="⚡",
-        day_number=1,
-        streak_days=1,
-        total_days_goal=90,
-        current_level=4,
-        points=1250,
-        protein_goal=160
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-
-    seed_user_defaults(db, user_id)
-
-    token = f"{user.id}:{user.email}"
-    return {"user": user.to_dict(), "token": token}
-
-@app.post("/api/auth/demo")
-def auth_demo(db: Session = Depends(get_db)):
-    demo_id = "demo_user_123"
-    user = db.query(User).filter(User.id == demo_id).first()
-    if not user:
-        user = User(
-            id=demo_id,
-            email="demo@lockin.app",
-            name="Lock-In Operator (Demo)",
-            avatar="⚡",
-            day_number=1,
-            streak_days=1,
-            total_days_goal=90,
-            current_level=4,
-            points=1250,
-            protein_goal=160
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        seed_user_defaults(db, demo_id)
-
-    return {"user": user.to_dict(), "token": "demo_token_lockin_operator_90"}
+# Authentication is handled exclusively via Supabase Auth on the frontend.
+# All protected endpoints verify the Supabase Bearer token via get_current_user.
 
 @app.get("/api/auth/me")
 def get_me(user: User = Depends(get_current_user)):

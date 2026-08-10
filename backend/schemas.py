@@ -46,12 +46,4 @@ class AIRoutineRequest(BaseModel):
     timeAvailable: Optional[str] = "30 mins"
     focusArea: Optional[str] = "Productivity & Health"
 
-class AuthLogin(BaseModel):
-    email: str
-    password: str
-
-class AuthRegister(BaseModel):
-    name: str
-    email: str
-    password: str
 

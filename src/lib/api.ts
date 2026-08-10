@@ -1,71 +1,54 @@
-import { User, Pillar, Task, Routine, AuthState, AIRoutineRequest, AIRoutineResponse, ProteinEntry, ProteinLogData } from '../types';
+import { User, Pillar, Task, Routine, AIRoutineRequest, AIRoutineResponse, ProteinEntry, ProteinLogData } from '../types';
+import { supabase } from './supabase';
 
-const TOKEN_KEY = 'lockin_auth_token';
+// Set VITE_BACKEND_URL on Vercel to the Render FastAPI service URL.
+// Local dev can use same-origin /api with the Vite proxy.
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || '').replace(/\/$/, '');
 
-export function getStoredToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-export function setStoredToken(token: string | null): void {
-  if (token) {
-    localStorage.setItem(TOKEN_KEY, token);
-  } else {
-    localStorage.removeItem(TOKEN_KEY);
-  }
+async function getSupabaseAccessToken(): Promise<string | null> {
+  const { data: { session } } = await supabase.auth.getSession();
+  return session?.access_token ?? null;
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = getStoredToken();
+  const token = await getSupabaseAccessToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string>),
   };
 
   if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+    headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(endpoint, {
+  const response = await fetch(`${BACKEND_URL}${endpoint}`, {
     ...options,
     headers,
   });
+  const contentType = response.headers.get('content-type') || '';
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({ error: 'An unexpected error occurred' }));
-    throw new Error(errorData.error || `HTTP Error ${response.status}`);
+    if (contentType.includes('application/json')) {
+      const errorData = await response.json().catch(() => ({ error: `HTTP Error ${response.status}` }));
+      throw new Error(errorData.detail || errorData.error || `HTTP Error ${response.status}`);
+    }
+
+    throw new Error(`HTTP Error ${response.status}: ${response.statusText || 'Unexpected server response'}`);
+  }
+
+  if (!contentType.includes('application/json')) {
+    throw new Error(
+      `Expected JSON from FastAPI for ${endpoint}, but received ${contentType || 'an unknown content type'}. ` +
+      'Check VITE_BACKEND_URL and the backend deployment URL.'
+    );
   }
 
   return response.json() as Promise<T>;
 }
 
 export const api = {
-  // Auth
-  async login(email: string, password: string): Promise<{ user: User; token: string }> {
-    const res = await request<{ user: User; token: string }>('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    });
-    setStoredToken(res.token);
-    return res;
-  },
-
-  async register(name: string, email: string, password: string): Promise<{ user: User; token: string }> {
-    const res = await request<{ user: User; token: string }>('/api/auth/register', {
-      method: 'POST',
-      body: JSON.stringify({ name, email, password }),
-    });
-    setStoredToken(res.token);
-    return res;
-  },
-
-  async loginDemo(): Promise<{ user: User; token: string }> {
-    const res = await request<{ user: User; token: string }>('/api/auth/demo', {
-      method: 'POST',
-    });
-    setStoredToken(res.token);
-    return res;
-  },
-
+  // Auth: Supabase handles sign-in/sign-up directly on the frontend.
+  // FastAPI only needs /api/auth/me to load the user profile after Supabase auth.
   async getCurrentUser(): Promise<{ user: User }> {
     return request<{ user: User }>('/api/auth/me');
   },

@@ -1,6 +1,10 @@
 import os
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
+
+load_dotenv(".env.local")
+load_dotenv()
 
 # Fetch database URL from environment or fallback to sqlite for graceful local execution
 DATABASE_URL = os.getenv("DATABASE_URL")

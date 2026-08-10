@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, AuthState } from '../types';
-import { api, getStoredToken, setStoredToken } from '../lib/api';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { api } from '../lib/api';
+import { supabase } from '../lib/supabase';
 
 interface AuthContextType extends AuthState {
   login: (email: string, pass: string) => Promise<void>;
@@ -16,267 +16,186 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [authState, setAuthState] = useState<AuthState>({
     user: null,
-    token: getStoredToken(),
+    token: null,
     isAuthenticated: false,
     isLoading: true,
   });
 
   useEffect(() => {
+    let mounted = true;
+
     async function initAuth() {
-      // 1. Supabase Auth listener & initial session check
-      if (isSupabaseConfigured()) {
-        try {
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session?.access_token) {
-            setStoredToken(session.access_token);
-            try {
-              const { user } = await api.getCurrentUser();
+      try {
+        // Get the existing Supabase session (persisted in localStorage by Supabase SDK)
+        const { data: { session } } = await supabase.auth.getSession();
+
+        if (session?.access_token && mounted) {
+          try {
+            const { user } = await api.getCurrentUser();
+            if (mounted) {
               setAuthState({
                 user,
                 token: session.access_token,
                 isAuthenticated: true,
                 isLoading: false,
               });
-              return;
-            } catch (err) {
-              console.error('Failed to load user from FastAPI backend:', err);
+            }
+          } catch (err) {
+            console.error('Failed to load user profile from FastAPI:', err);
+            // Token exists but backend call failed — still mark loading done
+            if (mounted) {
+              setAuthState({ user: null, token: null, isAuthenticated: false, isLoading: false });
             }
           }
-        } catch (err) {
-          console.warn('Supabase auth check error:', err);
+        } else if (mounted) {
+          setAuthState({ user: null, token: null, isAuthenticated: false, isLoading: false });
         }
-
-        // Listen for Supabase Auth state changes
-        const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
-          if (session?.access_token) {
-            setStoredToken(session.access_token);
-            try {
-              const { user } = await api.getCurrentUser();
-              setAuthState({
-                user,
-                token: session.access_token,
-                isAuthenticated: true,
-                isLoading: false,
-              });
-            } catch (e) {
-              console.error('Error fetching current user on auth state change:', e);
-            }
-          } else {
-            setStoredToken(null);
-            setAuthState({
-              user: null,
-              token: null,
-              isAuthenticated: false,
-              isLoading: false,
-            });
-          }
-        });
-
-        // If no session found yet, finish loading state
-        setAuthState((prev) => ({ ...prev, isLoading: false }));
-        return () => {
-          authListener.subscription.unsubscribe();
-        };
-      }
-
-      // 2. Fallback if token exists in localStorage
-      const token = getStoredToken();
-      if (token) {
-        try {
-          const { user } = await api.getCurrentUser();
-          setAuthState({
-            user,
-            token,
-            isAuthenticated: true,
-            isLoading: false,
-          });
-          return;
-        } catch (e) {
-          console.warn('Stored token invalid');
-          setStoredToken(null);
+      } catch (err) {
+        console.error('Supabase getSession error:', err);
+        if (mounted) {
+          setAuthState({ user: null, token: null, isAuthenticated: false, isLoading: false });
         }
       }
-
-      setAuthState({
-        user: null,
-        token: null,
-        isAuthenticated: false,
-        isLoading: false,
-      });
     }
 
     initAuth();
+
+    // Listen for Supabase Auth state changes (login, logout, token refresh)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!mounted) return;
+
+      if (session?.access_token) {
+        try {
+          const { user } = await api.getCurrentUser();
+          if (mounted) {
+            setAuthState({
+              user,
+              token: session.access_token,
+              isAuthenticated: true,
+              isLoading: false,
+            });
+          }
+        } catch (err) {
+          console.error('Error fetching current user on auth state change:', err);
+          if (mounted) {
+            setAuthState({ user: null, token: null, isAuthenticated: false, isLoading: false });
+          }
+        }
+      } else {
+        if (mounted) {
+          setAuthState({ user: null, token: null, isAuthenticated: false, isLoading: false });
+        }
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
+  /**
+   * Sign in with Supabase Auth — no local fallback.
+   * Throws a descriptive error if sign-in fails.
+   */
   const login = async (email: string, pass: string) => {
     setAuthState((prev) => ({ ...prev, isLoading: true }));
-    try {
-      if (isSupabaseConfigured()) {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
-          password: pass,
-        });
 
-        if (error) {
-          // If Supabase credentials are not valid or login failed on Supabase, attempt local auth fallback
-          console.warn('Supabase sign-in error, trying local auth fallback:', error.message);
-          try {
-            const { user, token } = await api.login(email, pass);
-            setStoredToken(token);
-            setAuthState({
-              user,
-              token,
-              isAuthenticated: true,
-              isLoading: false,
-            });
-            return;
-          } catch (localErr: any) {
-            setAuthState((prev) => ({ ...prev, isLoading: false }));
-            throw new Error(error.message || localErr.message || 'Login failed');
-          }
-        }
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
 
-        if (data.session?.access_token) {
-          setStoredToken(data.session.access_token);
-          const { user } = await api.getCurrentUser();
-          setAuthState({
-            user,
-            token: data.session.access_token,
-            isAuthenticated: true,
-            isLoading: false,
-          });
-          return;
-        }
-      }
-
-      // Local / FastAPI auth fallback
-      const { user, token } = await api.login(email, pass);
-      setStoredToken(token);
-      setAuthState({
-        user,
-        token,
-        isAuthenticated: true,
-        isLoading: false,
-      });
-    } catch (err: any) {
+    if (error) {
       setAuthState((prev) => ({ ...prev, isLoading: false }));
-      throw err;
+      // Provide a human-readable message for the common "Email not confirmed" case
+      if (error.message.toLowerCase().includes('email not confirmed')) {
+        throw new Error('Please confirm your email before signing in. Check your inbox for a confirmation link.');
+      }
+      throw new Error(error.message || 'Sign-in failed. Please check your credentials.');
     }
+
+    if (!data.session?.access_token) {
+      setAuthState((prev) => ({ ...prev, isLoading: false }));
+      throw new Error('No session returned from Supabase. Please try again.');
+    }
+
+    // onAuthStateChange will fire and set state — but set loading false here too
+    setAuthState((prev) => ({ ...prev, isLoading: false }));
   };
 
+  /**
+   * Sign up with Supabase Auth — no local fallback.
+   * If email confirmation is required, informs the user to check their inbox.
+   */
   const register = async (name: string, email: string, pass: string) => {
     setAuthState((prev) => ({ ...prev, isLoading: true }));
-    try {
-      if (isSupabaseConfigured()) {
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password: pass,
-          options: {
-            data: { name },
-          },
-        });
 
-        if (error) {
-          console.warn('Supabase sign-up warning:', error.message);
-          // Try local registration fallback if Supabase registration yields an issue
-          try {
-            const { user, token } = await api.register(name, email, pass);
-            setStoredToken(token);
-            setAuthState({
-              user,
-              token,
-              isAuthenticated: true,
-              isLoading: false,
-            });
-            return;
-          } catch (localErr: any) {
-            setAuthState((prev) => ({ ...prev, isLoading: false }));
-            throw new Error(error.message || localErr.message || 'Registration failed');
-          }
-        }
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password: pass,
+      options: {
+        data: { name },
+      },
+    });
 
-        if (data.session?.access_token) {
-          setStoredToken(data.session.access_token);
-          const { user } = await api.getCurrentUser();
-          setAuthState({
-            user,
-            token: data.session.access_token,
-            isAuthenticated: true,
-            isLoading: false,
-          });
-          return;
-        } else if (data.user) {
-          // If Supabase created user but requires email confirmation, fallback to local login token for instant access
-          const { user, token } = await api.register(name, email, pass);
-          setStoredToken(token);
-          setAuthState({
-            user,
-            token,
-            isAuthenticated: true,
-            isLoading: false,
-          });
-          return;
-        }
-      }
-
-      // Local / Demo API register fallback
-      const { user, token } = await api.register(name, email, pass);
-      setStoredToken(token);
-      setAuthState({
-        user,
-        token,
-        isAuthenticated: true,
-        isLoading: false,
-      });
-    } catch (err: any) {
+    if (error) {
       setAuthState((prev) => ({ ...prev, isLoading: false }));
-      throw err;
+      throw new Error(error.message || 'Registration failed. Please try again.');
+    }
+
+    if (data.session?.access_token) {
+      // Email confirmation is disabled — session granted immediately
+      // onAuthStateChange will handle the rest
+      setAuthState((prev) => ({ ...prev, isLoading: false }));
+    } else if (data.user && !data.session) {
+      // Email confirmation is required — user created but no session yet
+      setAuthState((prev) => ({ ...prev, isLoading: false }));
+      throw new Error(
+        'Account created! Please check your email and click the confirmation link before signing in.'
+      );
+    } else {
+      setAuthState((prev) => ({ ...prev, isLoading: false }));
+      throw new Error('Registration failed. Please try again.');
     }
   };
 
+  /**
+   * Demo login — signs into a pre-configured Supabase demo account.
+   * Set VITE_DEMO_EMAIL and VITE_DEMO_PASSWORD env vars pointing to a real Supabase user.
+   * Falls back to showing an error if demo credentials are not configured.
+   */
   const loginDemo = async () => {
-    setAuthState((prev) => ({ ...prev, isLoading: true }));
-    try {
-      const { user, token } = await api.loginDemo();
-      setStoredToken(token);
-      setAuthState({
-        user,
-        token,
-        isAuthenticated: true,
-        isLoading: false,
-      });
-    } catch (err) {
-      console.warn('Backend demo login endpoint error, using local fallback:', err);
-      const demoToken = 'demo_token_lockin_operator_90';
-      setStoredToken(demoToken);
-      try {
-        const { user } = await api.getCurrentUser();
-        setAuthState({
-          user,
-          token: demoToken,
-          isAuthenticated: true,
-          isLoading: false,
-        });
-      } catch (e) {
-        setAuthState({
-          user: null,
-          token: null,
-          isAuthenticated: false,
-          isLoading: false,
-        });
-      }
+    const demoEmail = import.meta.env.VITE_DEMO_EMAIL as string | undefined;
+    const demoPassword = import.meta.env.VITE_DEMO_PASSWORD as string | undefined;
+
+    if (!demoEmail || !demoPassword) {
+      throw new Error(
+        'Demo account is not configured. Please set VITE_DEMO_EMAIL and VITE_DEMO_PASSWORD env vars, or create a demo user in Supabase.'
+      );
     }
+
+    setAuthState((prev) => ({ ...prev, isLoading: true }));
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email: demoEmail,
+      password: demoPassword,
+    });
+
+    if (error) {
+      setAuthState((prev) => ({ ...prev, isLoading: false }));
+      throw new Error(
+        `Demo login failed: ${error.message}. Ensure the demo account exists in your Supabase project.`
+      );
+    }
+
+    // onAuthStateChange will set the full auth state
+    setAuthState((prev) => ({ ...prev, isLoading: false }));
   };
 
   const logout = async () => {
-    if (isSupabaseConfigured()) {
-      try {
-        await supabase.auth.signOut();
-      } catch (e) {
-        console.error('Supabase signout error:', e);
-      }
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.error('Supabase signOut error:', e);
     }
-    setStoredToken(null);
     setAuthState({
       user: null,
       token: null,
