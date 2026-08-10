@@ -81,10 +81,6 @@ const MainContent: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#080B09] text-[#F4F6F5] flex flex-col items-center justify-start py-2 sm:py-4 px-2 sm:px-4 font-inter select-none">
-      {/* Top Floating Helper Tag */}
-      <div className="text-[10px] sm:text-[11px] font-mono-code text-[#5E6D66] uppercase tracking-wider mb-2 sm:mb-3 text-center">
-        Tap bottom nav • Tap + to add task • Tap pillars for details
-      </div>
 
       {/* Main Container: Phone Frame vs Desktop Dashboard */}
       <div
