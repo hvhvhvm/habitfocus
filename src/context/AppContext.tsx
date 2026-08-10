@@ -70,6 +70,48 @@ const DEFAULT_PILLARS: Pillar[] = [
   { id: 'pil_mind', userId: 'usr', name: 'Mindset & Discipline', icon: '🔥', color: '#F5A623', dailyGoal: 'Cold Shower / Reading', completedCount: 0, totalCount: 0, streakDays: 2 },
 ];
 
+const DEFAULT_ROUTINES: Routine[] = [
+  {
+    id: 'r_morn',
+    userId: 'usr',
+    title: 'Morning Lock-In Protocol',
+    category: 'Morning Routine',
+    pillarId: 'pil_fit',
+    timeBlock: 'morning',
+    icon: '🌅',
+    description: 'Essential morning alignment routine to kickstart focus & hydration.',
+    tasks: ['500ml Water + Salt', '5-Min Sunlight', 'Cold Shower', 'Goal Review'],
+    subtasks: [
+      { id: 'st1', name: '500ml Cold Water + Electrolytes', completed: false },
+      { id: 'st2', name: '5-Min Direct Sunlight Exposure', completed: false },
+      { id: 'st3', name: '2-Min Cold Shower Reset', completed: false },
+      { id: 'st4', name: 'Review Top 3 Goals for Today', completed: false },
+    ],
+    completed: false,
+    isMaster: true,
+    active: true,
+  },
+  {
+    id: 'r_stretch',
+    userId: 'usr',
+    title: 'Post-Workout Mobility & Stretch',
+    category: 'Stretch Routine',
+    pillarId: 'pil_fit',
+    timeBlock: 'afternoon',
+    icon: '🧘',
+    description: '10-minute mobility and hamstring/hip opener sequence.',
+    tasks: ['Quad Stretch', 'Pigeon Pose', 'Cat Cow', 'Deep Breathing'],
+    subtasks: [
+      { id: 'st10', name: 'Hamstring & Quad Stretch (60s)', completed: false },
+      { id: 'st11', name: 'Hip Opener Pigeon Pose (60s)', completed: false },
+      { id: 'st12', name: 'Spinal Decompression & Deep Breathing', completed: false },
+    ],
+    completed: false,
+    isMaster: true,
+    active: true,
+  },
+];
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, updateUserInContext } = useAuth();
 
@@ -95,7 +137,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return [];
   });
 
-  const [routines, setRoutines] = useState<Routine[]>([]);
+  const [routines, setRoutines] = useState<Routine[]>(() => {
+    const saved = localStorage.getItem('lockin_routines');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {}
+    }
+    return DEFAULT_ROUTINES;
+  });
+
   const [proteinData, setProteinData] = useState<ProteinLogData | null>(null);
   const [isLoadingData, setIsLoadingData] = useState<boolean>(false);
 
@@ -134,8 +186,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setTasks(fetchedTasks);
         localStorage.setItem('lockin_tasks', JSON.stringify(fetchedTasks));
       }
-      if (fetchedRoutines && Array.isArray(fetchedRoutines)) {
+      if (fetchedRoutines && Array.isArray(fetchedRoutines) && fetchedRoutines.length > 0) {
         setRoutines(fetchedRoutines);
+        localStorage.setItem('lockin_routines', JSON.stringify(fetchedRoutines));
       }
       if (fetchedProtein) {
         setProteinData(fetchedProtein);
@@ -299,62 +352,123 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const createRoutine = async (data: Partial<Routine>) => {
+    const routineTitle = data.title || data.name || 'New Protocol Routine';
+    const subtaskItems = data.subtasks || (data.tasks || []).map((tName, idx) => ({
+      id: `sub_${Date.now()}_${idx}`,
+      name: tName,
+      completed: false,
+    }));
+
+    const newRoutine: Routine = {
+      id: `r_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      userId: 'local',
+      title: routineTitle,
+      category: data.category || 'Daily Routine',
+      pillarId: data.pillarId || pillars[0]?.id || 'pil_fit',
+      timeBlock: data.timeBlock || '',
+      icon: data.icon || '🧘',
+      description: data.description || '',
+      tasks: subtaskItems.map((s) => s.name),
+      subtasks: subtaskItems,
+      completed: false,
+      isMaster: data.isMaster !== undefined ? data.isMaster : true,
+      active: true,
+    };
+
+    // Save to state & local storage immediately for 0ms latency UI response!
+    setRoutines((prev) => {
+      const updated = [newRoutine, ...prev];
+      localStorage.setItem('lockin_routines', JSON.stringify(updated));
+      return updated;
+    });
+
     try {
-      await api.createRoutine(data).catch(() => null);
-      refreshData();
-    } catch (err) {
-      console.error('Failed to create routine:', err);
+      const serverRoutine = await api.createRoutine(data);
+      if (serverRoutine && serverRoutine.id) {
+        setRoutines((prev) => {
+          const updated = prev.map((r) => (r.id === newRoutine.id ? { ...newRoutine, ...serverRoutine } : r));
+          localStorage.setItem('lockin_routines', JSON.stringify(updated));
+          return updated;
+        });
+      }
+    } catch (err: any) {
+      console.warn('Backend API routine sync offline, saved routine locally:', err);
     }
   };
 
   const updateRoutine = async (routineId: string, data: Partial<Routine>) => {
+    setRoutines((prev) => {
+      const updated = prev.map((r) => (r.id === routineId ? { ...r, ...data } : r));
+      localStorage.setItem('lockin_routines', JSON.stringify(updated));
+      return updated;
+    });
+
     try {
-      setRoutines((prev) =>
-        prev.map((r) => (r.id === routineId ? { ...r, ...data } : r))
-      );
       const res = await api.updateRoutine(routineId, data).catch(() => null);
-      if (res?.routines) setRoutines(res.routines);
+      if (res?.routines) {
+        setRoutines(res.routines);
+        localStorage.setItem('lockin_routines', JSON.stringify(res.routines));
+      }
     } catch (err) {
       console.error('Failed to update routine:', err);
     }
   };
 
   const toggleRoutineSubtask = async (routineId: string, subtaskId: string) => {
-    try {
-      setRoutines((prev) =>
-        prev.map((r) => {
-          if (r.id !== routineId) return r;
-          const updatedSubtasks = (r.subtasks || []).map((s) =>
-            s.id === subtaskId ? { ...s, completed: !s.completed } : s
-          );
-          const allCompleted = updatedSubtasks.length > 0 && updatedSubtasks.every((s) => s.completed);
-          return { ...r, subtasks: updatedSubtasks, completed: allCompleted };
-        })
-      );
+    setRoutines((prev) => {
+      const updated = prev.map((r) => {
+        if (r.id !== routineId) return r;
+        const updatedSubtasks = (r.subtasks || []).map((s) =>
+          s.id === subtaskId ? { ...s, completed: !s.completed } : s
+        );
+        const allCompleted = updatedSubtasks.length > 0 && updatedSubtasks.every((s) => s.completed);
+        return { ...r, subtasks: updatedSubtasks, completed: allCompleted };
+      });
+      localStorage.setItem('lockin_routines', JSON.stringify(updated));
+      return updated;
+    });
 
+    try {
       const res = await api.toggleRoutineSubtask(routineId, subtaskId).catch(() => null);
-      if (res?.routines) setRoutines(res.routines);
+      if (res?.routines) {
+        setRoutines(res.routines);
+        localStorage.setItem('lockin_routines', JSON.stringify(res.routines));
+      }
     } catch (err) {
       console.error('Failed to toggle routine subtask:', err);
     }
   };
 
   const toggleRoutineComplete = async (routineId: string) => {
+    const target = routines.find((r) => r.id === routineId);
+    const isCompleting = target ? !target.completed : false;
+
+    if (isCompleting) {
+      confetti({
+        particleCount: 50,
+        spread: 70,
+        origin: { y: 0.7 },
+        colors: ['#3ECF8E', '#F5A623', '#B98CF0'],
+      });
+    }
+
+    setRoutines((prev) => {
+      const updated = prev.map((r) => {
+        if (r.id !== routineId) return r;
+        const nextCompleted = !r.completed;
+        const updatedSubtasks = (r.subtasks || []).map((s) => ({ ...s, completed: nextCompleted }));
+        return { ...r, completed: nextCompleted, subtasks: updatedSubtasks };
+      });
+      localStorage.setItem('lockin_routines', JSON.stringify(updated));
+      return updated;
+    });
+
     try {
-      const target = routines.find((r) => r.id === routineId);
-      const isCompleting = target ? !target.completed : false;
-
-      if (isCompleting) {
-        confetti({
-          particleCount: 50,
-          spread: 70,
-          origin: { y: 0.7 },
-          colors: ['#3ECF8E', '#F5A623', '#B98CF0'],
-        });
-      }
-
       const res = await api.toggleRoutineComplete(routineId).catch(() => null);
-      if (res?.routines) setRoutines(res.routines);
+      if (res?.routines) {
+        setRoutines(res.routines);
+        localStorage.setItem('lockin_routines', JSON.stringify(res.routines));
+      }
       if (res?.user) updateUserInContext(res.user);
     } catch (err) {
       console.error('Failed to toggle routine completion:', err);
@@ -362,8 +476,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteRoutine = async (routineId: string) => {
+    setRoutines((prev) => {
+      const updated = prev.filter((r) => r.id !== routineId);
+      localStorage.setItem('lockin_routines', JSON.stringify(updated));
+      return updated;
+    });
     try {
-      setRoutines((prev) => prev.filter((r) => r.id !== routineId));
       await api.deleteRoutine(routineId).catch(() => null);
     } catch (err) {
       console.error('Failed deleting routine:', err);
@@ -447,6 +565,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         timeBlock: '',
         icon: '🤖',
         tasks: (aiData.timeBlocks || []).flatMap((b: any) => (b.tasks || []).map((t: any) => t.name)),
+        subtasks: (aiData.timeBlocks || []).flatMap((b: any) =>
+          (b.tasks || []).map((t: any, idx: number) => ({
+            id: `sub_ai_${idx}`,
+            name: t.name,
+            completed: false,
+          }))
+        ),
         isMaster: true,
       });
 
