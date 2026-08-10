@@ -148,7 +148,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return DEFAULT_ROUTINES;
   });
 
-  const [proteinData, setProteinData] = useState<ProteinLogData | null>(null);
+  const [proteinData, setProteinData] = useState<ProteinLogData | null>(() => {
+    const saved = localStorage.getItem('lockin_protein');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed.goalGrams === 'number') return parsed;
+      } catch (e) {}
+    }
+    return { goalGrams: 160, totalLogged: 0, entries: [] };
+  });
   const [isLoadingData, setIsLoadingData] = useState<boolean>(false);
 
   const [activeTab, setActiveTab] = useState<'home' | 'pillars' | 'add' | 'routines' | 'progress' | 'profile'>('home');
@@ -498,7 +507,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
 
       const res = await api.addProteinEntry(foodName, proteinGrams, time).catch(() => null);
-      if (res?.data) setProteinData(res.data);
+      if (res?.data) {
+        setProteinData(res.data);
+        localStorage.setItem('lockin_protein', JSON.stringify(res.data));
+      } else {
+        const newEntry = {
+          id: `p_${Date.now()}`,
+          userId: 'local',
+          foodName,
+          proteinGrams,
+          time: time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          createdAt: new Date().toISOString(),
+        };
+        setProteinData((prev) => {
+          const goalGrams = prev?.goalGrams || 160;
+          const entries = [newEntry, ...(prev?.entries || [])];
+          const totalLogged = entries.reduce((sum, e) => sum + e.proteinGrams, 0);
+          const updated = { goalGrams, totalLogged, entries };
+          localStorage.setItem('lockin_protein', JSON.stringify(updated));
+          return updated;
+        });
+      }
       if (res?.user) updateUserInContext(res.user);
     } catch (err) {
       console.error('Failed to log protein entry:', err);
@@ -508,16 +537,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const deleteProteinEntry = async (id: string) => {
     try {
       const updated = await api.deleteProteinEntry(id).catch(() => null);
-      if (updated) setProteinData(updated);
+      if (updated) {
+        setProteinData(updated);
+        localStorage.setItem('lockin_protein', JSON.stringify(updated));
+      } else {
+        setProteinData((prev) => {
+          if (!prev) return null;
+          const entries = prev.entries.filter((e) => e.id !== id);
+          const totalLogged = entries.reduce((sum, e) => sum + e.proteinGrams, 0);
+          const updatedData = { ...prev, totalLogged, entries };
+          localStorage.setItem('lockin_protein', JSON.stringify(updatedData));
+          return updatedData;
+        });
+      }
     } catch (err) {
       console.error('Failed to delete protein entry:', err);
     }
   };
 
   const updateProteinGoal = async (goalGrams: number) => {
+    setProteinData((prev) => {
+      const updated = prev ? { ...prev, goalGrams } : { goalGrams, totalLogged: 0, entries: [] };
+      localStorage.setItem('lockin_protein', JSON.stringify(updated));
+      return updated;
+    });
     try {
       await api.updateProteinGoal(goalGrams).catch(() => null);
-      setProteinData((prev) => (prev ? { ...prev, goalGrams } : { goalGrams, totalLogged: 0, entries: [] }));
     } catch (err) {
       console.error('Failed updating protein goal:', err);
     }

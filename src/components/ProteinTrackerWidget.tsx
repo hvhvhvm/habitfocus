@@ -25,11 +25,28 @@ export const ProteinTrackerWidget: React.FC<ProteinTrackerWidgetProps> = ({ vari
   const [activeTab, setActiveTab] = useState<'presets' | 'custom' | 'history'>('presets');
   const [saveAsPreset, setSaveAsPreset] = useState(true);
   const [isEditingGoal, setIsEditingGoal] = useState(false);
+  const [isEditingCardGoal, setIsEditingCardGoal] = useState(false);
   const [justLoggedItem, setJustLoggedItem] = useState<string | null>(null);
 
   const [customFoodName, setCustomFoodName] = useState('');
   const [customGrams, setCustomGrams] = useState<number | ''>(25);
   const [goalInput, setGoalInput] = useState<number>(proteinData?.goalGrams || 160);
+
+  useEffect(() => {
+    if (proteinData?.goalGrams) {
+      setGoalInput(proteinData.goalGrams);
+    }
+  }, [proteinData?.goalGrams]);
+
+  const handleInlineGoalSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (goalInput > 0) {
+      updateProteinGoal(goalInput);
+      setIsEditingCardGoal(false);
+      setJustLoggedItem(`Protein target set to ${goalInput}g!`);
+      setTimeout(() => setJustLoggedItem(null), 2500);
+    }
+  };
 
   // Load custom saved presets from localStorage
   const [customPresets, setCustomPresets] = useState<CustomPreset[]>(() => {
@@ -125,10 +142,15 @@ export const ProteinTrackerWidget: React.FC<ProteinTrackerWidgetProps> = ({ vari
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="font-mono-code text-xs font-bold text-[#F5A623] bg-[#F5A623]/10 px-2 py-0.5 rounded-lg border border-[#F5A623]/20">
-              {totalLogged} / {goalGrams}g
-            </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setIsEditingCardGoal(!isEditingCardGoal)}
+              className="font-mono-code text-xs font-bold text-[#F5A623] bg-[#F5A623]/10 hover:bg-[#F5A623]/20 px-2 py-0.5 rounded-lg border border-[#F5A623]/30 transition-all flex items-center gap-1 cursor-pointer group"
+              title="Click to Edit Daily Protein Goal"
+            >
+              <span>{totalLogged} / {goalGrams}g</span>
+              <Edit2 className="w-3 h-3 text-[#F5A623] opacity-75 group-hover:opacity-100" />
+            </button>
             <button
               onClick={() => setIsModalOpen(true)}
               className="bg-[#F5A623] hover:bg-[#E0961F] text-[#0B1510] font-space font-bold text-xs px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer shadow-sm active:scale-95"
@@ -137,6 +159,64 @@ export const ProteinTrackerWidget: React.FC<ProteinTrackerWidgetProps> = ({ vari
             </button>
           </div>
         </div>
+
+        {/* Inline Goal Editor Section */}
+        {isEditingCardGoal && (
+          <form onSubmit={handleInlineGoalSave} className="mb-3 p-3 bg-[#121B16] border border-[#F5A623]/40 rounded-xl space-y-2 animate-in fade-in">
+            <div className="flex items-center justify-between text-xs text-[#F4F6F5] font-space">
+              <span className="font-semibold flex items-center gap-1 text-[#F5A623]">
+                <Target className="w-3.5 h-3.5" /> Set Daily Protein Goal
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsEditingCardGoal(false)}
+                className="text-[#8A9891] hover:text-[#F4F6F5] text-xs cursor-pointer p-0.5"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <input
+                  type="number"
+                  min={10}
+                  max={500}
+                  value={goalInput}
+                  onChange={(e) => setGoalInput(Number(e.target.value))}
+                  className="w-full bg-[#16201B] border border-[#26332C] rounded-lg px-3 py-1.5 text-xs font-mono-code text-[#F4F6F5] focus:outline-none focus:border-[#F5A623]"
+                  placeholder="Target in grams"
+                />
+                <span className="absolute right-2.5 top-1.5 text-xs text-[#8A9891] font-mono-code">g</span>
+              </div>
+              <button
+                type="submit"
+                className="bg-[#F5A623] hover:bg-[#E0961F] text-[#0B1510] font-space font-bold text-xs px-3 py-1.5 rounded-lg transition-all cursor-pointer shadow-sm"
+              >
+                Save
+              </button>
+            </div>
+
+            {/* Quick preset chips */}
+            <div className="flex items-center gap-1.5 pt-1 overflow-x-auto">
+              <span className="text-[10px] text-[#8A9891] font-mono-code flex-shrink-0">Presets:</span>
+              {[120, 140, 160, 180, 200, 220].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => setGoalInput(preset)}
+                  className={`text-[10px] font-mono-code px-2 py-0.5 rounded-md border transition-all cursor-pointer ${
+                    goalInput === preset
+                      ? 'bg-[#F5A623]/25 border-[#F5A623] text-[#F5A623] font-bold'
+                      : 'bg-[#16201B] border-[#26332C] text-[#8A9891] hover:text-[#F4F6F5]'
+                  }`}
+                >
+                  {preset}g
+                </button>
+              ))}
+            </div>
+          </form>
+        )}
 
         {/* Progress Bar */}
         <div className="w-full bg-[#1D2922] h-2.5 rounded-full overflow-hidden p-0.5 border border-[#26332C] mb-3">

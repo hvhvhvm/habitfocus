@@ -53,25 +53,17 @@ export const TopHeader: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Title & Points Row */}
+      {/* Main Title & Streaks Row */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <h1 className="font-space font-bold text-2xl sm:text-3xl text-[#F4F6F5] tracking-tight">
-            Today
-          </h1>
-          <button
-            onClick={() => setIsAIRoutineOpen(true)}
-            className="flex items-center gap-1 bg-gradient-to-r from-[#3ECF8E]/20 to-[#6BA6FF]/20 border border-[#3ECF8E]/40 hover:border-[#3ECF8E] px-2.5 py-1 rounded-full text-xs font-mono-code text-[#3ECF8E] hover:scale-105 transition-all cursor-pointer"
-          >
-            <Sparkles className="w-3 h-3" /> AI Protocol
-          </button>
-        </div>
+        <h1 className="font-space font-bold text-2xl sm:text-3xl text-[#F4F6F5] tracking-tight">
+          Today
+        </h1>
 
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 font-mono-code text-xs text-[#F5A623] bg-[#F5A623]/10 border border-[#F5A623]/30 px-3 py-1.5 rounded-full whitespace-nowrap shadow-sm">
-            <Flame className="w-3.5 h-3.5 text-[#F5A623] fill-[#F5A623]/30" />
-            <span className="font-semibold">{user?.totalPoints || 1593} pts</span>
-            <span className="text-[#5E6D66] font-normal">| Lvl {user?.currentLevel || 4}</span>
+          <div className="flex items-center gap-2 font-mono-code text-xs text-[#F5A623] bg-gradient-to-r from-[#F5A623]/15 to-[#3ECF8E]/10 border border-[#F5A623]/35 px-3.5 py-1.5 rounded-full whitespace-nowrap shadow-sm">
+            <Flame className="w-4 h-4 text-[#F5A623] fill-[#F5A623]/40 animate-pulse" />
+            <span className="font-bold font-space text-sm text-[#F4F6F5]">{user?.streakDays || 6}</span>
+            <span className="font-semibold text-[#F5A623]">Day Streak 🔥</span>
           </div>
         </div>
       </div>
