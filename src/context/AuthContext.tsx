@@ -1,12 +1,11 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, AuthState } from '../types';
 import { api } from '../lib/api';
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 interface AuthContextType extends AuthState {
   login: (email: string, pass: string) => Promise<void>;
   register: (name: string, email: string, pass: string) => Promise<void>;
-  loginDemo: () => Promise<void>;
   logout: () => Promise<void>;
   updateUserInContext: (user: User) => void;
 }
@@ -99,26 +98,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    * Throws a descriptive error if sign-in fails.
    */
   const login = async (email: string, pass: string) => {
+    if (!isSupabaseConfigured()) {
+      throw new Error(
+        'Supabase is not configured. Please verify that the VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY environment variables are correctly set in your environment.'
+      );
+    }
+
     setAuthState((prev) => ({ ...prev, isLoading: true }));
 
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
 
-    if (error) {
-      setAuthState((prev) => ({ ...prev, isLoading: false }));
-      // Provide a human-readable message for the common "Email not confirmed" case
-      if (error.message.toLowerCase().includes('email not confirmed')) {
-        throw new Error('Please confirm your email before signing in. Check your inbox for a confirmation link.');
+      if (error) {
+        setAuthState((prev) => ({ ...prev, isLoading: false }));
+        const msg = error.message.toLowerCase();
+        if (msg.includes('email not confirmed')) {
+          throw new Error('Please confirm your email before signing in. Check your inbox for a confirmation link.');
+        }
+        if (msg.includes('invalid login credentials') || msg.includes('invalid credentials') || msg.includes('incorrect password')) {
+          throw new Error('Incorrect password. Please try again.');
+        }
+        throw new Error(error.message || 'Sign-in failed. Please check your credentials.');
       }
-      throw new Error(error.message || 'Sign-in failed. Please check your credentials.');
-    }
 
-    if (!data.session?.access_token) {
+      if (!data.session?.access_token) {
+        setAuthState((prev) => ({ ...prev, isLoading: false }));
+        throw new Error('No session returned from Supabase. Please try again.');
+      }
+
       setAuthState((prev) => ({ ...prev, isLoading: false }));
-      throw new Error('No session returned from Supabase. Please try again.');
+    } catch (err: any) {
+      setAuthState((prev) => ({ ...prev, isLoading: false }));
+      throw new Error(err.message || 'Network error: Failed to connect to Supabase Auth service.');
     }
-
-    // onAuthStateChange will fire and set state — but set loading false here too
-    setAuthState((prev) => ({ ...prev, isLoading: false }));
   };
 
   /**
@@ -126,68 +138,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    * If email confirmation is required, informs the user to check their inbox.
    */
   const register = async (name: string, email: string, pass: string) => {
-    setAuthState((prev) => ({ ...prev, isLoading: true }));
-
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password: pass,
-      options: {
-        data: { name },
-      },
-    });
-
-    if (error) {
-      setAuthState((prev) => ({ ...prev, isLoading: false }));
-      throw new Error(error.message || 'Registration failed. Please try again.');
-    }
-
-    if (data.session?.access_token) {
-      // Email confirmation is disabled — session granted immediately
-      // onAuthStateChange will handle the rest
-      setAuthState((prev) => ({ ...prev, isLoading: false }));
-    } else if (data.user && !data.session) {
-      // Email confirmation is required — user created but no session yet
-      setAuthState((prev) => ({ ...prev, isLoading: false }));
+    if (!isSupabaseConfigured()) {
       throw new Error(
-        'Account created! Please check your email and click the confirmation link before signing in.'
-      );
-    } else {
-      setAuthState((prev) => ({ ...prev, isLoading: false }));
-      throw new Error('Registration failed. Please try again.');
-    }
-  };
-
-  /**
-   * Demo login — signs into a pre-configured Supabase demo account.
-   * Set VITE_DEMO_EMAIL and VITE_DEMO_PASSWORD env vars pointing to a real Supabase user.
-   * Falls back to showing an error if demo credentials are not configured.
-   */
-  const loginDemo = async () => {
-    const demoEmail = import.meta.env.VITE_DEMO_EMAIL as string | undefined;
-    const demoPassword = import.meta.env.VITE_DEMO_PASSWORD as string | undefined;
-
-    if (!demoEmail || !demoPassword) {
-      throw new Error(
-        'Demo account is not configured. Please set VITE_DEMO_EMAIL and VITE_DEMO_PASSWORD env vars, or create a demo user in Supabase.'
+        'Supabase is not configured. Please verify that the VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY environment variables are correctly set in your environment.'
       );
     }
 
     setAuthState((prev) => ({ ...prev, isLoading: true }));
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email: demoEmail,
-      password: demoPassword,
-    });
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password: pass,
+        options: {
+          data: { name },
+        },
+      });
 
-    if (error) {
+      if (error) {
+        setAuthState((prev) => ({ ...prev, isLoading: false }));
+        const msg = error.message.toLowerCase();
+        if (msg.includes('user already exists') || msg.includes('already registered') || msg.includes('already exists')) {
+          throw new Error('Email already registered. Please sign in instead.');
+        }
+        throw new Error(error.message || 'Registration failed. Please try again.');
+      }
+
+      if (data.session?.access_token) {
+        setAuthState((prev) => ({ ...prev, isLoading: false }));
+      } else if (data.user && !data.session) {
+        setAuthState((prev) => ({ ...prev, isLoading: false }));
+        throw new Error(
+          'Account created! Please check your email and click the confirmation link before signing in.'
+        );
+      } else {
+        setAuthState((prev) => ({ ...prev, isLoading: false }));
+        throw new Error('Registration failed. Please try again.');
+      }
+    } catch (err: any) {
       setAuthState((prev) => ({ ...prev, isLoading: false }));
-      throw new Error(
-        `Demo login failed: ${error.message}. Ensure the demo account exists in your Supabase project.`
-      );
+      throw new Error(err.message || 'Network error: Failed to connect to Supabase Auth service.');
     }
-
-    // onAuthStateChange will set the full auth state
-    setAuthState((prev) => ({ ...prev, isLoading: false }));
   };
 
   const logout = async () => {
@@ -214,7 +205,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ...authState,
         login,
         register,
-        loginDemo,
         logout,
         updateUserInContext,
       }}

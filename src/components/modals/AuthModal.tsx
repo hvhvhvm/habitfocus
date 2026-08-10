@@ -4,7 +4,7 @@ import { useApp } from '../../context/AppContext';
 import { X, Lock, KeyRound, UserPlus, Zap } from 'lucide-react';
 
 export const AuthModal: React.FC = () => {
-  const { login, register, loginDemo } = useAuth();
+  const { login, register } = useAuth();
   const { isAuthModalOpen, setIsAuthModalOpen } = useApp();
 
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -51,17 +51,7 @@ export const AuthModal: React.FC = () => {
     }
   };
 
-  const handleDemoLogin = async () => {
-    setIsSubmitting(true);
-    try {
-      await loginDemo();
-      setIsAuthModalOpen(false);
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Demo login failed');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-in fade-in">
@@ -141,19 +131,7 @@ export const AuthModal: React.FC = () => {
           </button>
         </form>
 
-        <div className="relative flex py-4 items-center">
-          <div className="flex-grow border-t border-[#26332C]"></div>
-          <span className="flex-shrink mx-3 font-mono-code text-[10px] text-[#8A9891] uppercase">Or Instant Access</span>
-          <div className="flex-grow border-t border-[#26332C]"></div>
-        </div>
 
-        <button
-          onClick={handleDemoLogin}
-          disabled={isSubmitting}
-          className="w-full bg-[#1D2922] hover:bg-[#212D26] border border-[#3ECF8E]/30 text-[#3ECF8E] font-sans font-semibold text-xs py-2.5 px-4 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
-        >
-          <Zap className="w-4 h-4 fill-[#3ECF8E]/20" /> 1-Click Demo Operator Sign In
-        </button>
 
         <div className="text-center mt-4 pt-3 border-t border-[#26332C]/60 text-xs text-[#8A9891]">
           {mode === 'login' ? (

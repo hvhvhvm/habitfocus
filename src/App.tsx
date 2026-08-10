@@ -19,7 +19,6 @@ import { AuthModal } from './components/modals/AuthModal';
 import { Lock, ShieldAlert, Zap, KeyRound } from 'lucide-react';
 
 const ProtectedGate: React.FC = () => {
-  const { loginDemo } = useAuth();
   const { setIsAuthModalOpen } = useApp();
 
   return (
@@ -49,12 +48,7 @@ const ProtectedGate: React.FC = () => {
             <KeyRound className="w-4 h-4" /> Sign In / Create Supabase Account
           </button>
 
-          <button
-            onClick={() => loginDemo()}
-            className="w-full bg-[#16201B] hover:bg-[#1D2922] text-[#F4F6F5] border border-[#26332C] font-sans font-semibold text-xs py-2.5 px-4 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
-          >
-            <Zap className="w-4 h-4 text-[#F5A623]" /> Instant Demo Operator Access
-          </button>
+
         </div>
 
         <div className="mt-6 pt-4 border-t border-[#26332C] text-[10px] font-mono-code text-[#5E6D66] flex items-center justify-center gap-1">
