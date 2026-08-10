@@ -23,6 +23,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let mounted = true;
 
+    /** Build a minimal User from Supabase session metadata as a fallback
+     *  when the FastAPI backend is temporarily unreachable. */
+    function userFromSession(session: { user: { id: string; email?: string | null; user_metadata?: Record<string, any> } }): import('../types').User {
+      const meta = session.user.user_metadata || {};
+      const email = session.user.email || '';
+      return {
+        id: session.user.id,
+        email,
+        name: meta.name || meta.full_name || email.split('@')[0] || 'Operator',
+        avatar: meta.avatar || '⚡',
+        streakDays: 1,
+        totalPoints: 0,
+        currentLevel: 1,
+        lockInMode: false,
+        dayNumber: 1,
+        totalDaysGoal: 90,
+      };
+    }
+
     async function initAuth() {
       try {
         // Get the existing Supabase session (persisted in localStorage by Supabase SDK)
@@ -41,9 +60,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           } catch (err) {
             console.error('Failed to load user profile from FastAPI:', err);
-            // Token exists but backend call failed — still mark loading done
+            // FastAPI unreachable — fall back to Supabase session metadata
+            // so the user is not kicked out after a successful Supabase login.
             if (mounted) {
-              setAuthState({ user: null, token: null, isAuthenticated: false, isLoading: false });
+              setAuthState({
+                user: userFromSession(session),
+                token: session.access_token,
+                isAuthenticated: true,
+                isLoading: false,
+              });
             }
           }
         } else if (mounted) {
@@ -76,8 +101,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         } catch (err) {
           console.error('Error fetching current user on auth state change:', err);
+          // FastAPI unreachable — fall back to Supabase session metadata
+          // so login succeeds even if backend is temporarily down.
           if (mounted) {
-            setAuthState({ user: null, token: null, isAuthenticated: false, isLoading: false });
+            setAuthState({
+              user: userFromSession(session),
+              token: session.access_token,
+              isAuthenticated: true,
+              isLoading: false,
+            });
           }
         }
       } else {

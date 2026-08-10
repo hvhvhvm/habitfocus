@@ -1,9 +1,13 @@
 import { User, Pillar, Task, Routine, AIRoutineRequest, AIRoutineResponse, ProteinEntry, ProteinLogData } from '../types';
 import { supabase } from './supabase';
 
-// Set VITE_BACKEND_URL on Vercel to the Render FastAPI service URL.
-// Local dev can use same-origin /api with the Vite proxy.
-const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || '').replace(/\/$/, '');
+// Supports both VITE_BACKEND_URL and VITE_API_URL so either Vercel env var name works.
+// Local dev uses same-origin /api via the Vite proxy (no BACKEND_URL needed).
+const BACKEND_URL = (
+  import.meta.env.VITE_BACKEND_URL ||
+  import.meta.env.VITE_API_URL ||
+  ''
+).replace(/\/$/, '');
 
 async function getSupabaseAccessToken(): Promise<string | null> {
   const { data: { session } } = await supabase.auth.getSession();
