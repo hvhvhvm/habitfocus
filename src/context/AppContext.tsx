@@ -64,14 +64,40 @@ export function getCurrentTimeBlock(): TimeBlock {
   return 'night';
 }
 
+const DEFAULT_PILLARS: Pillar[] = [
+  { id: 'pil_fit', userId: 'usr', name: 'Physical Mastery', icon: '💪', color: '#3ECF8E', dailyGoal: 'Workout / 160g Protein', completedCount: 0, totalCount: 0, streakDays: 3 },
+  { id: 'pil_focus', userId: 'usr', name: 'Deep Focus & Code', icon: '🧠', color: '#6BA6FF', dailyGoal: '4 Hours Deep Work', completedCount: 0, totalCount: 0, streakDays: 5 },
+  { id: 'pil_mind', userId: 'usr', name: 'Mindset & Discipline', icon: '🔥', color: '#F5A623', dailyGoal: 'Cold Shower / Reading', completedCount: 0, totalCount: 0, streakDays: 2 },
+];
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, updateUserInContext } = useAuth();
 
-  const [pillars, setPillars] = useState<Pillar[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [pillars, setPillars] = useState<Pillar[]>(() => {
+    const saved = localStorage.getItem('lockin_pillars');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {}
+    }
+    return DEFAULT_PILLARS;
+  });
+
+  const [tasks, setTasks] = useState<Task[]>(() => {
+    const saved = localStorage.getItem('lockin_tasks');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) {}
+    }
+    return [];
+  });
+
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [proteinData, setProteinData] = useState<ProteinLogData | null>(null);
-  const [isLoadingData, setIsLoadingData] = useState<boolean>(true);
+  const [isLoadingData, setIsLoadingData] = useState<boolean>(false);
 
   const [activeTab, setActiveTab] = useState<'home' | 'pillars' | 'add' | 'routines' | 'progress' | 'profile'>('home');
   const [viewMode, setViewMode] = useState<'mobile' | 'desktop'>('mobile');
@@ -92,22 +118,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const refreshData = useCallback(async () => {
     if (!isAuthenticated) return;
-    setIsLoadingData(true);
     try {
       const [fetchedPillars, fetchedTasks, fetchedRoutines, fetchedProtein] = await Promise.all([
-        api.getPillars(),
-        api.getTasks(),
-        api.getRoutines(),
-        api.getProteinLog(),
+        api.getPillars().catch(() => null),
+        api.getTasks().catch(() => null),
+        api.getRoutines().catch(() => null),
+        api.getProteinLog().catch(() => null),
       ]);
-      setPillars(fetchedPillars);
-      setTasks(fetchedTasks);
-      setRoutines(fetchedRoutines);
-      setProteinData(fetchedProtein);
+
+      if (fetchedPillars && Array.isArray(fetchedPillars) && fetchedPillars.length > 0) {
+        setPillars(fetchedPillars);
+        localStorage.setItem('lockin_pillars', JSON.stringify(fetchedPillars));
+      }
+      if (fetchedTasks && Array.isArray(fetchedTasks)) {
+        setTasks(fetchedTasks);
+        localStorage.setItem('lockin_tasks', JSON.stringify(fetchedTasks));
+      }
+      if (fetchedRoutines && Array.isArray(fetchedRoutines)) {
+        setRoutines(fetchedRoutines);
+      }
+      if (fetchedProtein) {
+        setProteinData(fetchedProtein);
+      }
     } catch (err) {
-      console.error('Error fetching app data:', err);
-    } finally {
-      setIsLoadingData(false);
+      console.warn('Backend sync skipped, using local state:', err);
     }
   }, [isAuthenticated]);
 
@@ -135,9 +169,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const targetTask = tasks.find((t) => t.id === id);
       const isCompleting = targetTask ? !targetTask.completed : false;
 
-      setTasks((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, completed: !t.completed, completedAt: !t.completed ? new Date().toISOString() : null } : t))
-      );
+      setTasks((prev) => {
+        const updated = prev.map((t) => (t.id === id ? { ...t, completed: !t.completed, completedAt: !t.completed ? new Date().toISOString() : null } : t));
+        localStorage.setItem('lockin_tasks', JSON.stringify(updated));
+        return updated;
+      });
 
       if (isCompleting) {
         confetti({
@@ -148,65 +184,123 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         });
       }
 
-      const res = await api.toggleTask(id);
-      if (res.tasks) setTasks(res.tasks);
-      if (res.user) updateUserInContext(res.user);
-
-      const updatedPillars = await api.getPillars();
-      setPillars(updatedPillars);
+      const res = await api.toggleTask(id).catch(() => null);
+      if (res?.tasks) {
+        setTasks(res.tasks);
+        localStorage.setItem('lockin_tasks', JSON.stringify(res.tasks));
+      }
+      if (res?.user) updateUserInContext(res.user);
     } catch (err) {
       console.error('Failed to toggle task:', err);
-      refreshData();
     }
   };
 
   const createTask = async (data: { pillarId: string; timeBlock: TimeBlock; name: string; points?: number; repeatFrequency?: any }) => {
+    const fallbackPillarId = data.pillarId || pillars[0]?.id || 'pil_fit';
+
+    const tempTask: Task = {
+      id: `task_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      userId: 'local',
+      pillarId: fallbackPillarId,
+      timeBlock: data.timeBlock,
+      name: data.name.trim(),
+      completed: false,
+      points: data.points || 15,
+      repeatFrequency: data.repeatFrequency || 'daily',
+      createdAt: new Date().toISOString(),
+    };
+
+    setTasks((prev) => {
+      const updated = [...prev, tempTask];
+      localStorage.setItem('lockin_tasks', JSON.stringify(updated));
+      return updated;
+    });
+
     try {
-      const newTask = await api.createTask(data);
-      setTasks((prev) => [...prev, newTask]);
-      refreshData();
-    } catch (err) {
-      console.error('Failed to create task:', err);
+      const serverTask = await api.createTask({ ...data, pillarId: fallbackPillarId });
+      if (serverTask && serverTask.id) {
+        setTasks((prev) => {
+          const updated = prev.map((t) => (t.id === tempTask.id ? serverTask : t));
+          localStorage.setItem('lockin_tasks', JSON.stringify(updated));
+          return updated;
+        });
+      }
+    } catch (err: any) {
+      console.warn('Backend API task sync offline, saved task locally:', err);
     }
   };
 
   const deleteTask = async (id: string) => {
+    setTasks((prev) => {
+      const updated = prev.filter((t) => t.id !== id);
+      localStorage.setItem('lockin_tasks', JSON.stringify(updated));
+      return updated;
+    });
     try {
-      setTasks((prev) => prev.filter((t) => t.id !== id));
-      await api.deleteTask(id);
-      refreshData();
+      await api.deleteTask(id).catch(() => null);
     } catch (err) {
       console.error('Failed to delete task:', err);
     }
   };
 
   const createPillar = async (data: { name: string; icon?: string; color?: string; dailyGoal?: string }): Promise<Pillar> => {
+    const tempPillar: Pillar = {
+      id: `pil_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      userId: 'local',
+      name: data.name.trim(),
+      icon: data.icon || '🧠',
+      color: data.color || '#3ECF8E',
+      dailyGoal: data.dailyGoal || 'Daily Focus Domain',
+      completedCount: 0,
+      totalCount: 0,
+      streakDays: 1,
+    };
+
+    // Update state immediately for instant UI feedback!
+    setPillars((prev) => {
+      const updated = [...prev, tempPillar];
+      localStorage.setItem('lockin_pillars', JSON.stringify(updated));
+      return updated;
+    });
+
     try {
-      const newPillar = await api.createPillar(data);
-      setPillars((prev) => [...prev, newPillar]);
-      await refreshData();
-      return newPillar;
+      const serverPillar = await api.createPillar(data);
+      if (serverPillar && serverPillar.id) {
+        setPillars((prev) => {
+          const updated = prev.map((p) => (p.id === tempPillar.id ? serverPillar : p));
+          localStorage.setItem('lockin_pillars', JSON.stringify(updated));
+          return updated;
+        });
+        return serverPillar;
+      }
     } catch (err: any) {
-      console.error('Failed to create pillar:', err);
-      throw err;
+      console.warn('Backend API pillar sync offline, saved pillar locally:', err);
     }
+
+    return tempPillar;
   };
 
   const deletePillar = async (id: string) => {
+    setPillars((prev) => {
+      const updated = prev.filter((p) => p.id !== id);
+      localStorage.setItem('lockin_pillars', JSON.stringify(updated));
+      return updated;
+    });
+    setTasks((prev) => {
+      const updated = prev.filter((t) => t.pillarId !== id);
+      localStorage.setItem('lockin_tasks', JSON.stringify(updated));
+      return updated;
+    });
     try {
-      setPillars((prev) => prev.filter((p) => p.id !== id));
-      setTasks((prev) => prev.filter((t) => t.pillarId !== id));
-      await api.deletePillar(id);
-      await refreshData();
+      await api.deletePillar(id).catch(() => null);
     } catch (err: any) {
       console.error('Failed to delete pillar:', err);
-      await refreshData();
     }
   };
 
   const createRoutine = async (data: Partial<Routine>) => {
     try {
-      await api.createRoutine(data);
+      await api.createRoutine(data).catch(() => null);
       refreshData();
     } catch (err) {
       console.error('Failed to create routine:', err);
@@ -218,11 +312,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setRoutines((prev) =>
         prev.map((r) => (r.id === routineId ? { ...r, ...data } : r))
       );
-      const res = await api.updateRoutine(routineId, data);
-      if (res.routines) setRoutines(res.routines);
+      const res = await api.updateRoutine(routineId, data).catch(() => null);
+      if (res?.routines) setRoutines(res.routines);
     } catch (err) {
       console.error('Failed to update routine:', err);
-      refreshData();
     }
   };
 
@@ -239,11 +332,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         })
       );
 
-      const res = await api.toggleRoutineSubtask(routineId, subtaskId);
-      if (res.routines) setRoutines(res.routines);
+      const res = await api.toggleRoutineSubtask(routineId, subtaskId).catch(() => null);
+      if (res?.routines) setRoutines(res.routines);
     } catch (err) {
       console.error('Failed to toggle routine subtask:', err);
-      refreshData();
     }
   };
 
@@ -261,19 +353,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         });
       }
 
-      const res = await api.toggleRoutineComplete(routineId);
-      if (res.routines) setRoutines(res.routines);
-      if (res.user) updateUserInContext(res.user);
+      const res = await api.toggleRoutineComplete(routineId).catch(() => null);
+      if (res?.routines) setRoutines(res.routines);
+      if (res?.user) updateUserInContext(res.user);
     } catch (err) {
       console.error('Failed to toggle routine completion:', err);
-      refreshData();
     }
   };
 
   const deleteRoutine = async (routineId: string) => {
     try {
       setRoutines((prev) => prev.filter((r) => r.id !== routineId));
-      await api.deleteRoutine(routineId);
+      await api.deleteRoutine(routineId).catch(() => null);
     } catch (err) {
       console.error('Failed deleting routine:', err);
     }
@@ -288,9 +379,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         colors: ['#F5A623', '#3ECF8E'],
       });
 
-      const res = await api.addProteinEntry(foodName, proteinGrams, time);
-      setProteinData(res.data);
-      if (res.user) updateUserInContext(res.user);
+      const res = await api.addProteinEntry(foodName, proteinGrams, time).catch(() => null);
+      if (res?.data) setProteinData(res.data);
+      if (res?.user) updateUserInContext(res.user);
     } catch (err) {
       console.error('Failed to log protein entry:', err);
     }
@@ -298,8 +389,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteProteinEntry = async (id: string) => {
     try {
-      const updated = await api.deleteProteinEntry(id);
-      setProteinData(updated);
+      const updated = await api.deleteProteinEntry(id).catch(() => null);
+      if (updated) setProteinData(updated);
     } catch (err) {
       console.error('Failed to delete protein entry:', err);
     }
@@ -307,7 +398,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateProteinGoal = async (goalGrams: number) => {
     try {
-      await api.updateProteinGoal(goalGrams);
+      await api.updateProteinGoal(goalGrams).catch(() => null);
       setProteinData((prev) => (prev ? { ...prev, goalGrams } : { goalGrams, totalLogged: 0, entries: [] }));
     } catch (err) {
       console.error('Failed updating protein goal:', err);
@@ -322,7 +413,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       for (const p of aiData.pillars || []) {
         let match = existingPillars.find((ep) => ep.name.toLowerCase() === p.name.toLowerCase());
         if (!match) {
-          match = await api.createPillar({
+          match = await createPillar({
             name: p.name,
             icon: p.icon || '⚡',
             color: p.color || '#3ECF8E',
@@ -333,12 +424,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         pillarMap[p.name] = match.id;
       }
 
-      const defaultPillarId = existingPillars[0]?.id;
+      const defaultPillarId = existingPillars[0]?.id || 'pil_fit';
 
       for (const block of aiData.timeBlocks || []) {
         for (const t of block.tasks || []) {
           const matchedPillarId = pillarMap[t.pillarName] || defaultPillarId;
-          await api.createTask({
+          await createTask({
             pillarId: matchedPillarId,
             timeBlock: block.timeBlock,
             name: t.name,
@@ -348,7 +439,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       }
 
-      await api.createRoutine({
+      await createRoutine({
         title: aiData.routineTitle || 'AI Lock-In Protocol',
         description: aiData.summary || 'AI generated daily productivity protocol.',
         category: 'AI Routine',
@@ -373,8 +464,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const reset90DayProtocol = async () => {
     try {
-      const res = await api.reset90DayProtocol();
-      if (res.user) {
+      const res = await api.reset90DayProtocol().catch(() => null);
+      if (res?.user) {
         updateUserInContext(res.user);
       }
       confetti({

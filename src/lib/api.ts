@@ -25,10 +25,17 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${BACKEND_URL}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${BACKEND_URL}${endpoint}`, {
+      ...options,
+      headers,
+    });
+  } catch (netErr: any) {
+    console.warn(`Network error reaching ${endpoint}:`, netErr?.message || netErr);
+    throw new Error(`Server connection offline. Operating in local protocol mode.`);
+  }
+
   const contentType = response.headers.get('content-type') || '';
 
   if (!response.ok) {
@@ -42,8 +49,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
   if (!contentType.includes('application/json')) {
     throw new Error(
-      `Expected JSON from FastAPI for ${endpoint}, but received ${contentType || 'an unknown content type'}. ` +
-      'Check VITE_BACKEND_URL and the backend deployment URL.'
+      `Expected JSON from FastAPI for ${endpoint}, but received ${contentType || 'an unknown content type'}.`
     );
   }
 
