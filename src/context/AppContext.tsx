@@ -177,6 +177,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const currentBlock = getCurrentTimeBlock();
 
+  // Backend returns `totalLoggedGrams` but our ProteinLogData type uses `totalLogged`.
+  // This normalizer maps between the two so the progress bar always reflects real data.
+  const normalizeProteinData = (raw: any): ProteinLogData => ({
+    goalGrams: raw.goalGrams ?? 160,
+    totalLogged: raw.totalLogged ?? raw.totalLoggedGrams ?? 0,
+    entries: (raw.entries || []).map((e: any) => ({
+      id: e.id,
+      userId: e.userId ?? e.user_id ?? 'local',
+      foodName: e.foodName ?? e.food_name ?? '',
+      proteinGrams: e.proteinGrams ?? e.protein_grams ?? 0,
+      time: e.time ?? e.logged_time ?? '',
+      createdAt: e.createdAt ?? e.created_at ?? new Date().toISOString(),
+    })),
+  });
+
   const refreshData = useCallback(async () => {
     if (!isAuthenticated) return;
     try {
@@ -200,7 +215,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         localStorage.setItem('lockin_routines', JSON.stringify(fetchedRoutines));
       }
       if (fetchedProtein) {
-        setProteinData(fetchedProtein);
+        const normalized = normalizeProteinData(fetchedProtein);
+        setProteinData(normalized);
+        localStorage.setItem('lockin_protein', JSON.stringify(normalized));
       }
     } catch (err) {
       console.warn('Backend sync skipped, using local state:', err);
@@ -508,8 +525,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       const res = await api.addProteinEntry(foodName, proteinGrams, time).catch(() => null);
       if (res?.data) {
-        setProteinData(res.data);
-        localStorage.setItem('lockin_protein', JSON.stringify(res.data));
+        const normalized = normalizeProteinData(res.data);
+        setProteinData(normalized);
+        localStorage.setItem('lockin_protein', JSON.stringify(normalized));
       } else {
         const newEntry = {
           id: `p_${Date.now()}`,
@@ -538,8 +556,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const updated = await api.deleteProteinEntry(id).catch(() => null);
       if (updated) {
-        setProteinData(updated);
-        localStorage.setItem('lockin_protein', JSON.stringify(updated));
+        const normalized = normalizeProteinData(updated);
+        setProteinData(normalized);
+        localStorage.setItem('lockin_protein', JSON.stringify(normalized));
       } else {
         setProteinData((prev) => {
           if (!prev) return null;
