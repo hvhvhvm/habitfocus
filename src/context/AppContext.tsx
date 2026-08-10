@@ -39,7 +39,7 @@ interface AppContextType {
   toggleTask: (id: string) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
   createTask: (data: { pillarId: string; timeBlock: TimeBlock; name: string; points?: number; repeatFrequency?: any }) => Promise<void>;
-  createPillar: (data: { name: string; icon?: string; color?: string; dailyGoal?: string }) => Promise<void>;
+  createPillar: (data: { name: string; icon?: string; color?: string; dailyGoal?: string }) => Promise<Pillar>;
   deletePillar: (id: string) => Promise<void>;
   createRoutine: (data: Partial<Routine>) => Promise<void>;
   updateRoutine: (routineId: string, data: Partial<Routine>) => Promise<void>;
@@ -180,12 +180,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const createPillar = async (data: { name: string; icon?: string; color?: string; dailyGoal?: string }) => {
+  const createPillar = async (data: { name: string; icon?: string; color?: string; dailyGoal?: string }): Promise<Pillar> => {
     try {
       const newPillar = await api.createPillar(data);
       setPillars((prev) => [...prev, newPillar]);
-    } catch (err) {
+      await refreshData();
+      return newPillar;
+    } catch (err: any) {
       console.error('Failed to create pillar:', err);
+      throw err;
     }
   };
 
@@ -194,8 +197,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setPillars((prev) => prev.filter((p) => p.id !== id));
       setTasks((prev) => prev.filter((t) => t.pillarId !== id));
       await api.deletePillar(id);
-    } catch (err) {
+      await refreshData();
+    } catch (err: any) {
       console.error('Failed to delete pillar:', err);
+      await refreshData();
     }
   };
 
@@ -328,7 +333,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         pillarMap[p.name] = match.id;
       }
 
-      const defaultPillarId = existingPillars[0]?.id || 'pil_fit';
+      const defaultPillarId = existingPillars[0]?.id;
 
       for (const block of aiData.timeBlocks || []) {
         for (const t of block.tasks || []) {

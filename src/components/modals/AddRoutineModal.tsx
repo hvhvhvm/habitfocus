@@ -33,7 +33,7 @@ export const AddRoutineModal: React.FC = () => {
     e.preventDefault();
     if (!title.trim()) return;
 
-    const defaultPillar = pillars[0]?.id || 'pil_fit';
+    const defaultPillar = pillars[0]?.id;
 
     await createRoutine({
       title: title.trim(),

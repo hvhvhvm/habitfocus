@@ -105,9 +105,12 @@ def create_pillar(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    if not req.name or not req.name.strip():
+        raise HTTPException(status_code=400, detail="Pillar name is required.")
+        
     pillar = Pillar(
         user_id=user.id,
-        name=req.name,
+        name=req.name.strip(),
         icon=req.icon or "🔥",
         color=req.color or "#3ECF8E",
         daily_goal=req.dailyGoal or "1 Task/day",
@@ -145,11 +148,31 @@ def create_task(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    if not req.name or not req.name.strip():
+        raise HTTPException(status_code=400, detail="Task name is required.")
+
+    # Safely verify pillar belongs to user or resolve to a valid fallback
+    target_pillar = db.query(Pillar).filter(Pillar.id == req.pillarId, Pillar.user_id == user.id).first()
+    if not target_pillar:
+        # Resolve to user's first existing pillar, or auto-create a default pillar
+        target_pillar = db.query(Pillar).filter(Pillar.user_id == user.id).first()
+        if not target_pillar:
+            target_pillar = Pillar(
+                user_id=user.id,
+                name="General Focus",
+                icon="⚡",
+                color="#3ECF8E",
+                daily_goal="Daily Protocol",
+            )
+            db.add(target_pillar)
+            db.commit()
+            db.refresh(target_pillar)
+
     task = Task(
         user_id=user.id,
-        pillar_id=req.pillarId,
+        pillar_id=target_pillar.id,
         time_block=req.timeBlock or "morning",
-        name=req.name,
+        name=req.name.strip(),
         points=req.points or 50,
         completed=False,
         repeat_frequency=req.repeatFrequency or "daily",
@@ -215,9 +238,10 @@ def create_routine(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    routine_title = req.title or req.name or "Daily Protocol Routine"
     routine = Routine(
         user_id=user.id,
-        name=req.name,
+        name=routine_title,
         icon=req.icon or "🌅",
         duration_mins=req.durationMins or 30,
         total_steps=len(req.subtasks or []) or req.totalSteps or 3,

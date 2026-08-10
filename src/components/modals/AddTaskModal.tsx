@@ -4,7 +4,7 @@ import { TimeBlock, RepeatFrequency } from '../../types';
 import { X, Check } from 'lucide-react';
 
 export const AddTaskModal: React.FC = () => {
-  const { pillars, createTask, isAddTaskOpen, setIsAddTaskOpen } = useApp();
+  const { pillars, createTask, isAddTaskOpen, setIsAddTaskOpen, setIsAddPillarOpen } = useApp();
 
   const [name, setName] = useState<string>('');
   const [selectedPillarId, setSelectedPillarId] = useState<string>(pillars[0]?.id || '');
@@ -20,7 +20,7 @@ export const AddTaskModal: React.FC = () => {
     if (!name.trim()) return;
 
     setIsSubmitting(true);
-    const targetPillarId = selectedPillarId || pillars[0]?.id || 'pil_fit';
+    const targetPillarId = selectedPillarId || pillars[0]?.id || '';
 
     await createTask({
       pillarId: targetPillarId,
@@ -68,28 +68,53 @@ export const AddTaskModal: React.FC = () => {
 
           {/* Pillar Selector */}
           <div>
-            <label className="font-mono-code text-[11px] text-[#8A9891] uppercase tracking-wider block mb-2">
-              Pillar Category
-            </label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="font-mono-code text-[11px] text-[#8A9891] uppercase tracking-wider block">
+                Pillar Category
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddTaskOpen(false);
+                  setIsAddPillarOpen(true);
+                }}
+                className="font-mono-code text-[10px] text-[#3ECF8E] hover:underline cursor-pointer"
+              >
+                + New Pillar
+              </button>
+            </div>
             <div className="flex gap-2 flex-wrap">
-              {pillars.map((pillar) => {
-                const isSelected = (selectedPillarId || pillars[0]?.id) === pillar.id;
-                return (
-                  <button
-                    key={pillar.id}
-                    type="button"
-                    onClick={() => setSelectedPillarId(pillar.id)}
-                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border transition-all cursor-pointer ${
-                      isSelected
-                        ? 'bg-[#3ECF8E]/15 border-[#3ECF8E] text-[#3ECF8E]'
-                        : 'bg-[#1D2922] border-[#26332C] text-[#8A9891] hover:text-[#F4F6F5]'
-                    }`}
-                  >
-                    <span>{pillar.icon}</span>
-                    <span>{pillar.name}</span>
-                  </button>
-                );
-              })}
+              {pillars.length === 0 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddTaskOpen(false);
+                    setIsAddPillarOpen(true);
+                  }}
+                  className="w-full bg-[#1D2922] border border-[#3ECF8E]/40 text-[#3ECF8E] p-3 rounded-xl text-xs font-semibold hover:bg-[#3ECF8E]/10 text-center cursor-pointer"
+                >
+                  No pillars created yet. Click here to add your first Pillar!
+                </button>
+              ) : (
+                pillars.map((pillar) => {
+                  const isSelected = (selectedPillarId || pillars[0]?.id) === pillar.id;
+                  return (
+                    <button
+                      key={pillar.id}
+                      type="button"
+                      onClick={() => setSelectedPillarId(pillar.id)}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-[#3ECF8E]/15 border-[#3ECF8E] text-[#3ECF8E]'
+                          : 'bg-[#1D2922] border-[#26332C] text-[#8A9891] hover:text-[#F4F6F5]'
+                      }`}
+                    >
+                      <span>{pillar.icon}</span>
+                      <span>{pillar.name}</span>
+                    </button>
+                  );
+                })
+              )}
             </div>
           </div>
 

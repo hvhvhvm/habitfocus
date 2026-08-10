@@ -115,11 +115,13 @@ class Routine(Base):
             "id": self.id,
             "userId": self.user_id,
             "name": self.name,
+            "title": self.name,
             "icon": self.icon,
             "durationMins": self.duration_mins,
             "totalSteps": self.total_steps,
             "completed": self.completed,
             "subtasks": self.subtasks or [],
+            "isMaster": True,
         }
 
 class ProteinLog(Base):

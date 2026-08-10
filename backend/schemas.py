@@ -16,7 +16,8 @@ class TaskCreate(BaseModel):
     customDays: Optional[List[str]] = []
 
 class RoutineCreate(BaseModel):
-    name: str
+    name: Optional[str] = None
+    title: Optional[str] = None
     icon: Optional[str] = "🌅"
     durationMins: Optional[int] = 30
     totalSteps: Optional[int] = 3

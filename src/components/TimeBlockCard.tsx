@@ -69,7 +69,7 @@ export const TimeBlockCard: React.FC<TimeBlockCardProps> = ({
     e.preventDefault();
     if (!quickTaskName.trim()) return;
 
-    const targetPillarId = selectedPillarId || pillars[0]?.id || 'pil_fit';
+    const targetPillarId = selectedPillarId || pillars[0]?.id;
     await createTask({
       pillarId: targetPillarId,
       timeBlock,
