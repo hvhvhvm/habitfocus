@@ -23,7 +23,7 @@ const AVATAR_OPTIONS = ['⚡', '🚀', '💪', '🧠', '🎯', '🔥', '🏆', '
 
 export const ProfileView: React.FC = () => {
   const { user, logout, updateUserInContext } = useAuth();
-  const { setIsAuthModalOpen, reset90DayProtocol, proteinData, updateProteinGoal } = useApp();
+  const { setIsAuthModalOpen, reset90DayProtocol, proteinData, updateProteinGoal, simulateNextDay } = useApp();
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(user?.name || 'Lock-In Operator');
@@ -34,6 +34,20 @@ export const ProfileView: React.FC = () => {
   const [isConfirmingReset, setIsConfirmingReset] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
+  const [isSimulating, setIsSimulating] = useState(false);
+
+  const handleSimulateNextDay = async () => {
+    setIsSimulating(true);
+    try {
+      await simulateNextDay();
+      setSuccessMsg('Successfully simulated rollover! Tasks reset, day advanced, and protein log cleared.');
+      setTimeout(() => setSuccessMsg(''), 5000);
+    } catch (e) {
+      console.error('Failed to simulate rollover:', e);
+    } finally {
+      setIsSimulating(false);
+    }
+  };
 
   const handleSaveProfile = async () => {
     try {
@@ -273,6 +287,28 @@ export const ProfileView: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* DEVELOPER TOOLS: SIMULATE NEXT DAY */}
+        <div className="p-4 bg-[#1E2738] border border-[#3A4E70] rounded-2xl mb-6">
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <div>
+              <h4 className="font-space font-bold text-sm text-[#6BA6FF] flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4" /> Simulate Next Day (Testing)
+              </h4>
+              <p className="text-xs text-[#8A9891] mt-0.5 leading-relaxed">
+                Force advance by 1 calendar day to test the automated daily rollover. This will reset all task and routine completions, recalculate streaks, and clear the protein log.
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={handleSimulateNextDay}
+            disabled={isSimulating}
+            className="w-full bg-[#6BA6FF]/20 hover:bg-[#6BA6FF]/30 text-[#6BA6FF] border border-[#6BA6FF]/30 font-space font-bold text-xs py-2.5 px-4 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+          >
+            <Sparkles className="w-4 h-4" /> {isSimulating ? 'Processing Rollover...' : 'Simulate 1-Day Leap'}
+          </button>
+        </div>
 
         {/* DANGER ZONE: 90-DAY RESET BUTTON DAY 1 */}
         <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl mb-6">

@@ -20,6 +20,7 @@ class User(Base):
     current_level = Column(Integer, default=4)
     points = Column(Integer, default=1250)
     protein_goal = Column(Integer, default=160)
+    last_active_date = Column(String, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
 
     pillars = relationship("Pillar", back_populates="user", cascade="all, delete-orphan")
@@ -28,6 +29,10 @@ class User(Base):
     protein_logs = relationship("ProteinLog", back_populates="user", cascade="all, delete-orphan")
 
     def to_dict(self):
+        # Sync level dynamically (400 points per level, starting at lvl 1, default 1250 gives lvl 4)
+        computed_level = max(1, (self.points // 400) + 1)
+        if self.current_level != computed_level:
+            self.current_level = computed_level
         return {
             "id": self.id,
             "email": self.email,
@@ -36,9 +41,11 @@ class User(Base):
             "dayNumber": self.day_number,
             "streakDays": self.streak_days,
             "totalDaysGoal": self.total_days_goal,
-            "currentLevel": self.current_level,
+            "currentLevel": computed_level,
             "points": self.points,
+            "totalPoints": self.points,
             "proteinGoal": self.protein_goal,
+            "lastActiveDate": self.last_active_date,
         }
 
 class Pillar(Base):

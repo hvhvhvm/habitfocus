@@ -52,6 +52,7 @@ interface AppContextType {
   importAIRoutine: (aiData: any) => Promise<void>;
   reset90DayProtocol: () => Promise<void>;
   refreshData: () => Promise<void>;
+  simulateNextDay: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -195,13 +196,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const refreshData = useCallback(async () => {
     if (!isAuthenticated) return;
     try {
-      const [fetchedPillars, fetchedTasks, fetchedRoutines, fetchedProtein] = await Promise.all([
+      const [fetchedPillars, fetchedTasks, fetchedRoutines, fetchedProtein, fetchedUserRes] = await Promise.all([
         api.getPillars().catch(() => null),
         api.getTasks().catch(() => null),
         api.getRoutines().catch(() => null),
         api.getProteinLog().catch(() => null),
+        api.getCurrentUser().catch(() => null),
       ]);
 
+      if (fetchedUserRes && fetchedUserRes.user) {
+        updateUserInContext(fetchedUserRes.user);
+      }
       if (fetchedPillars && Array.isArray(fetchedPillars) && fetchedPillars.length > 0) {
         setPillars(fetchedPillars);
         localStorage.setItem('lockin_pillars', JSON.stringify(fetchedPillars));
@@ -222,7 +227,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (err) {
       console.warn('Backend sync skipped, using local state:', err);
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, updateUserInContext]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -378,7 +383,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const createRoutine = async (data: Partial<Routine>) => {
-    const routineTitle = data.title || data.name || 'New Protocol Routine';
+    const routineTitle = data.title || (data as any).name || 'New Protocol Routine';
     const subtaskItems = data.subtasks || (data.tasks || []).map((tName, idx) => ({
       id: `sub_${Date.now()}_${idx}`,
       name: tName,
@@ -669,6 +674,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const simulateNextDay = async () => {
+    try {
+      const res = await api.simulateNextDay().catch(() => null);
+      if (res?.user) {
+        updateUserInContext(res.user);
+      }
+      if (res?.tasks) {
+        setTasks(res.tasks);
+        localStorage.setItem('lockin_tasks', JSON.stringify(res.tasks));
+      }
+      if (res?.routines) {
+        setRoutines(res.routines);
+        localStorage.setItem('lockin_routines', JSON.stringify(res.routines));
+      }
+      // Reset protein data locally
+      const defaultProtein = { goalGrams: res?.user?.proteinGoal ?? 160, totalLogged: 0, entries: [] };
+      setProteinData(defaultProtein);
+      localStorage.setItem('lockin_protein', JSON.stringify(defaultProtein));
+
+      confetti({
+        particleCount: 80,
+        spread: 80,
+        origin: { y: 0.5 },
+        colors: ['#3ECF8E', '#F5A623', '#6BA6FF'],
+      });
+    } catch (err) {
+      console.error('Failed to simulate next day:', err);
+    }
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -715,6 +750,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         importAIRoutine,
         reset90DayProtocol,
         refreshData,
+        simulateNextDay,
       }}
     >
       {children}

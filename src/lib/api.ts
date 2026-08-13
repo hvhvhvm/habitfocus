@@ -18,6 +18,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   const token = await getSupabaseAccessToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    'X-Local-Date': new Date().toLocaleDateString('en-CA'),
     ...(options.headers as Record<string, string>),
   };
 
@@ -72,6 +73,12 @@ export const api = {
 
   async reset90DayProtocol(): Promise<{ success: boolean; user: User; tasks: Task[]; routines: Routine[]; message: string }> {
     return request<{ success: boolean; user: User; tasks: Task[]; routines: Routine[]; message: string }>('/api/auth/reset-90day', {
+      method: 'POST',
+    });
+  },
+
+  async simulateNextDay(): Promise<{ success: boolean; user: User; tasks: Task[]; routines: Routine[]; message: string }> {
+    return request<{ success: boolean; user: User; tasks: Task[]; routines: Routine[]; message: string }>('/api/auth/simulate-next-day', {
       method: 'POST',
     });
   },

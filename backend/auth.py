@@ -1,11 +1,12 @@
 import os
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, HTTPException, status
+from datetime import datetime
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from backend.database import get_db
-from backend.models import User, Pillar, Task, Routine
+from backend.models import User, Pillar, Task, Routine, ProteinLog
 
 load_dotenv(".env.local")
 load_dotenv()
@@ -17,7 +18,90 @@ SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY") or os.getenv("VITE_SUPABASE_A
 SUPABASE_HOST = SUPABASE_URL.rstrip("/").replace("https://", "").replace("http://", "")
 
 
+def check_and_perform_rollover(user: User, db: Session, local_date: str) -> bool:
+    if not local_date or not local_date.strip():
+        return False
+
+    if not user.last_active_date:
+        user.last_active_date = local_date
+        db.commit()
+        db.refresh(user)
+        return False
+
+    if user.last_active_date == local_date:
+        return False
+
+    # The day has changed!
+    try:
+        last_date = datetime.strptime(user.last_active_date, "%Y-%m-%d")
+        curr_date = datetime.strptime(local_date, "%Y-%m-%d")
+        days_passed = (curr_date - last_date).days
+    except Exception:
+        days_passed = 1
+
+    if days_passed <= 0:
+        # Clock adjustment or out of order dates, just update last active date
+        user.last_active_date = local_date
+        db.commit()
+        db.refresh(user)
+        return False
+
+    # Execute rollover
+    execute_rollover_logic(user, db, days_passed, local_date)
+    return True
+
+
+def execute_rollover_logic(user: User, db: Session, days_passed: int, local_date: str):
+    # 1. Determine if streak is maintained from the last active day
+    user_tasks = db.query(Task).filter(Task.user_id == user.id).all()
+    completed_tasks = sum(1 for t in user_tasks if t.completed)
+    total_tasks = len(user_tasks)
+
+    # Streak is maintained if days_passed is exactly 1, and the user completed at least 1 task
+    # (or if they had 0 tasks).
+    is_streak_maintained = False
+    if days_passed == 1:
+        if total_tasks == 0:
+            is_streak_maintained = True
+        elif completed_tasks > 0:
+            is_streak_maintained = True
+
+    if is_streak_maintained:
+        user.streak_days += 1
+    else:
+        user.streak_days = 0
+
+    # 2. Advance the day number
+    user.day_number += days_passed
+
+    # 3. Reset task completions
+    for task in user_tasks:
+        task.completed = False
+
+    # 4. Reset routine completions
+    user_routines = db.query(Routine).filter(Routine.user_id == user.id).all()
+    for routine in user_routines:
+        routine.completed = False
+        if routine.subtasks:
+            updated_subtasks = []
+            for st in routine.subtasks:
+                st_copy = dict(st)
+                st_copy["completed"] = False
+                updated_subtasks.append(st_copy)
+            routine.subtasks = updated_subtasks
+
+    # 5. Clear protein log
+    db.query(ProteinLog).filter(ProteinLog.user_id == user.id).delete()
+
+    # 6. Update last active date
+    user.last_active_date = local_date
+
+    db.commit()
+    db.refresh(user)
+
+
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db)
 ) -> User:
@@ -98,7 +182,8 @@ async def get_current_user(
             total_days_goal=90,
             current_level=4,
             points=1250,
-            protein_goal=160
+            protein_goal=160,
+            last_active_date=""
         )
         db.add(user)
         db.commit()
@@ -106,6 +191,11 @@ async def get_current_user(
 
         # Seed initial pillars & tasks for new user
         seed_user_defaults(db, user_id)
+
+    # Execute rollover check if X-Local-Date header is present
+    local_date = request.headers.get("x-local-date") or ""
+    if local_date:
+        check_and_perform_rollover(user, db, local_date)
 
     return user
 

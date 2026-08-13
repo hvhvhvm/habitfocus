@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -7,9 +7,18 @@ from backend.database import engine, get_db, Base
 from backend.models import User, Pillar, Task, Routine, ProteinLog
 from backend.auth import get_current_user
 from backend import schemas
+from sqlalchemy import text
 
 # Create database tables automatically upon startup
 Base.metadata.create_all(bind=engine)
+
+# Auto-migrate: Add last_active_date column if it doesn't exist in the users table
+try:
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE users ADD COLUMN last_active_date VARCHAR DEFAULT ''"))
+        conn.commit()
+except Exception as e:
+    pass
 
 app = FastAPI(title="Lock-In Protocol API (FastAPI + Supabase PostgreSQL + SQLAlchemy)")
 
@@ -88,6 +97,38 @@ def reset_90day_protocol(
         "tasks": [t.to_dict() for t in db.query(Task).filter(Task.user_id == user.id).all()],
         "routines": [r.to_dict() for r in db.query(Routine).filter(Routine.user_id == user.id).all()],
         "message": "90-Day Lock-In Protocol successfully reset to Day 1!",
+    }
+
+@app.post("/api/auth/simulate-next-day")
+def simulate_next_day(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    from datetime import datetime, timedelta
+    from backend.auth import execute_rollover_logic
+    
+    local_date = request.headers.get("x-local-date") or ""
+    base_date_str = user.last_active_date or local_date
+    if not base_date_str:
+        base_date_str = datetime.utcnow().strftime("%Y-%m-%d")
+
+    try:
+        base_dt = datetime.strptime(base_date_str, "%Y-%m-%d")
+    except Exception:
+        base_dt = datetime.utcnow()
+
+    next_date_str = (base_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Run the rollover logic to force-advance 1 day
+    execute_rollover_logic(user, db, 1, next_date_str)
+
+    return {
+        "success": True,
+        "user": user.to_dict(),
+        "tasks": [t.to_dict() for t in db.query(Task).filter(Task.user_id == user.id).all()],
+        "routines": [r.to_dict() for r in db.query(Routine).filter(Routine.user_id == user.id).all()],
+        "message": f"Successfully simulated rollover to Day {user.day_number} ({next_date_str})!",
     }
 
 # --- PILLARS ENDPOINTS ---
