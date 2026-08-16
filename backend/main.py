@@ -106,7 +106,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/api/health")
+@app.api_route("/", methods=["GET", "HEAD"])
+def root_check():
+    return {"status": "ok", "message": "Lock-In Protocol API Server Live"}
+
+@app.api_route("/api/health", methods=["GET", "HEAD"])
 def health_check():
     return {"status": "ok", "backend": "FastAPI + SQLAlchemy + Supabase"}
 
