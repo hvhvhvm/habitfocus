@@ -247,6 +247,12 @@ export const api = {
     });
   },
 
+  async sendTestBlockPushNotification(timeBlock: string): Promise<any> {
+    return request<any>(`/api/notifications/test-block?timeBlock=${timeBlock}`, {
+      method: 'POST',
+    });
+  },
+
   async triggerDailyBriefing(): Promise<any> {
     return request<any>('/api/notifications/trigger-briefing', {
       method: 'POST',

@@ -5,6 +5,7 @@ import { api } from '../../lib/api';
 import {
   requestPushNotificationSubscription,
   testMobilePushNotification,
+  testTimeBlockNotification,
   getNotificationPermissionState,
 } from '../../lib/notifications';
 import {
@@ -28,9 +29,10 @@ export const NotificationSettingsModal: React.FC = () => {
 
   const [permissionState, setPermissionState] = useState<NotificationPermission>('default');
   const [isSubscribed, setIsSubscribed] = useState<boolean>(false);
-  const [preferredTime, setPreferredTime] = useState<string>('08:00');
+  const [preferredTime, setPreferredTime] = useState<string>('random_morning');
   const [isEnabling, setIsEnabling] = useState<boolean>(false);
   const [isTesting, setIsTesting] = useState<boolean>(false);
+  const [testingBlock, setTestingBlock] = useState<string | null>(null);
   const [testStatusMessage, setTestStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -83,6 +85,24 @@ export const NotificationSettingsModal: React.FC = () => {
       setTestStatusMessage(res.message || '⚡ Notification delivered to your phone!');
     } else {
       setErrorMessage(res.message || 'Failed delivering test notification.');
+    }
+  };
+
+  const handleTestBlock = async (block: string) => {
+    setTestingBlock(block);
+    setTestStatusMessage(null);
+    setErrorMessage(null);
+    const res = await testTimeBlockNotification(block, {
+      dayNumber: user?.dayNumber || 1,
+      totalDays: user?.totalDaysGoal || 90,
+      streakDays: user?.streakDays || 1,
+      tasks,
+    });
+    setTestingBlock(null);
+    if (res.success) {
+      setTestStatusMessage(res.message || '⚡ Block notification sent!');
+    } else {
+      setErrorMessage(res.message || 'Failed sending block notification.');
     }
   };
 
@@ -183,70 +203,99 @@ export const NotificationSettingsModal: React.FC = () => {
             </div>
           )}
 
-          {/* Time Preference */}
-          <div className="bg-[#16201B] border border-[#26332C] rounded-2xl p-4 space-y-3">
-            <label className="font-space font-semibold text-sm text-[#F4F6F5] flex items-center gap-2">
-              <Clock className="w-4 h-4 text-[#3ECF8E]" /> Daily Morning Delivery Time
-            </label>
-            <p className="text-[11px] text-[#8A9891]">
-              Choose a specific morning time or select random morning time (between 06:30 AM – 09:00 AM) to receive your daily day number and task breakdown.
-            </p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {[
-                { id: 'random_morning', label: '🎲 Random Morning (6:30-9 AM)' },
-                { id: '06:30', label: '06:30 AM' },
-                { id: '07:00', label: '07:00 AM' },
-                { id: '07:30', label: '07:30 AM' },
-                { id: '08:00', label: '08:00 AM' },
-                { id: '09:00', label: '09:00 AM' },
-              ].map((opt) => (
+          {/* Morning Overview + Per-Time-Block Notification Schedule */}
+          <div className="space-y-2.5">
+            <div className="font-mono-code text-[11px] uppercase tracking-widest text-[#8A9891] flex items-center gap-2">
+              <Clock className="w-3.5 h-3.5" /> Daily Notification Schedule — All 4 Time Blocks
+            </div>
+
+            {[
+              {
+                block: 'morning',
+                icon: '☀️',
+                label: 'Morning Lock-In',
+                time: '06:30 – 08:00 AM',
+                defaultTime: '07:00',
+                desc: 'Start of day: how many tasks you have for the morning',
+                quote: 'Win the morning, win the day.',
+                color: '#F5A623',
+                taskCount: tasks.filter((t) => !t.completed && (t.timeBlock || 'morning').toLowerCase() === 'morning').length,
+              },
+              {
+                block: 'afternoon',
+                icon: '✨',
+                label: 'Afternoon Momentum',
+                time: '12:00 – 01:00 PM',
+                defaultTime: '12:30',
+                desc: 'Midday check-in: keep your momentum going',
+                quote: 'Consistency over intensity.',
+                color: '#3ECF8E',
+                taskCount: tasks.filter((t) => !t.completed && (t.timeBlock || '').toLowerCase() === 'afternoon').length,
+              },
+              {
+                block: 'evening',
+                icon: '🌇',
+                label: 'Evening Surge',
+                time: '05:00 – 06:30 PM',
+                defaultTime: '17:30',
+                desc: 'End of work: finish strong and close open loops',
+                quote: 'How you finish today determines tomorrow.',
+                color: '#6BA6FF',
+                taskCount: tasks.filter((t) => !t.completed && (t.timeBlock || '').toLowerCase() === 'evening').length,
+              },
+              {
+                block: 'night',
+                icon: '🌙',
+                label: 'Night Protocol',
+                time: '09:00 – 10:00 PM',
+                defaultTime: '21:30',
+                desc: 'Wind-down: wrap up and prepare for tomorrow',
+                quote: 'Rest is fuel for tomorrow\'s battle.',
+                color: '#A06EFF',
+                taskCount: tasks.filter((t) => !t.completed && (t.timeBlock || '').toLowerCase() === 'night').length,
+              },
+            ].map(({ block, icon, label, time, desc, quote, color, taskCount }) => (
+              <div
+                key={block}
+                className="bg-[#0F1512] border border-[#26332C] rounded-2xl p-3.5 flex items-center gap-3"
+              >
+                <div
+                  className="w-9 h-9 rounded-xl flex items-center justify-center text-base shrink-0 border"
+                  style={{ background: `${color}18`, borderColor: `${color}40` }}
+                >
+                  {icon}
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-space font-semibold text-xs text-[#F4F6F5]">{label}</span>
+                    <span className="font-mono-code text-[10px] text-[#5E6D66]">{time}</span>
+                    <span
+                      className="font-mono-code text-[10px] px-1.5 py-0.5 rounded-full"
+                      style={{ background: `${color}20`, color }}
+                    >
+                      {taskCount} task{taskCount !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-[#5E6D66] font-mono-code mt-0.5">{desc}</p>
+                  <p className="text-[10px] text-[#8A9891] font-mono-code mt-0.5 italic">💡 "{quote}"</p>
+                </div>
+
                 <button
-                  key={opt.id}
-                  onClick={() => setPreferredTime(opt.id)}
-                  className={`py-2 px-2.5 rounded-xl font-mono-code text-xs text-center border transition-all cursor-pointer ${
-                    preferredTime === opt.id
-                      ? 'bg-[#3ECF8E] text-[#0B1510] font-bold border-[#3ECF8E]'
-                      : 'bg-[#0F1512] text-[#8A9891] border-[#26332C] hover:border-[#3ECF8E]/40'
+                  onClick={() => handleTestBlock(block)}
+                  disabled={testingBlock !== null || !isSubscribed}
+                  title={!isSubscribed ? 'Enable notifications first' : `Send ${label} test alert`}
+                  className={`shrink-0 flex items-center gap-1.5 text-[10px] font-space font-bold px-2.5 py-1.5 rounded-xl border transition-all cursor-pointer disabled:opacity-40 ${
+                    testingBlock === block
+                      ? 'bg-[#26332C] text-[#3ECF8E] border-[#3ECF8E]/30'
+                      : 'bg-[#16201B] text-[#3ECF8E] border-[#26332C] hover:border-[#3ECF8E]/50 hover:bg-[#3ECF8E]/10'
                   }`}
                 >
-                  {opt.label}
+                  <Send className="w-3 h-3" />
+                  {testingBlock === block ? '...' : 'Test'}
                 </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Live Notification Preview */}
-          <div className="bg-[#16201B] border border-[#26332C] rounded-2xl p-4 space-y-2.5">
-            <div className="font-mono-code text-[11px] uppercase tracking-wider text-[#8A9891] flex items-center justify-between">
-              <span>Preview Daily Phone Alert</span>
-              <span className="text-[#3ECF8E]">Lockscreen Format</span>
-            </div>
-
-            <div className="bg-[#0F1512] border border-[#26332C] rounded-2xl p-3.5 shadow-inner">
-              <div className="flex items-start gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-[#3ECF8E] text-[#0B1510] flex items-center justify-center font-bold text-sm shrink-0">
-                  ⚡
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between">
-                    <span className="font-space font-bold text-xs text-[#F4F6F5]">
-                      Day {user?.dayNumber || 1} of {user?.totalDaysGoal || 90} Protocol
-                    </span>
-                    <span className="text-[10px] font-mono-code text-[#5E6D66]">
-                      {preferredTime === 'random_morning' ? 'Random AM' : `${preferredTime} AM`}
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-[#8A9891] mt-1.5 font-mono-code whitespace-pre-line leading-relaxed">
-                    {`Day ${user?.dayNumber || 1}: You have ${tasks.filter((t) => !t.completed).length} tasks scheduled today:\n` +
-                      `☀️ Morning: ${tasks.filter((t) => !t.completed && (t.timeBlock || 'morning').toLowerCase() === 'morning').length} tasks\n` +
-                      `✨ Afternoon: ${tasks.filter((t) => !t.completed && (t.timeBlock || '').toLowerCase() === 'afternoon').length} tasks\n` +
-                      `🌇 Evening: ${tasks.filter((t) => !t.completed && (t.timeBlock || '').toLowerCase() === 'evening').length} tasks\n` +
-                      `🌙 Night: ${tasks.filter((t) => !t.completed && (t.timeBlock || '').toLowerCase() === 'night').length} tasks\n` +
-                      `🔥 Streak: ${user?.streakDays || 1} days active. Time to lock in!`}
-                  </div>
-                </div>
               </div>
-            </div>
+            ))}
           </div>
 
           {/* Feedback messages */}

@@ -11,6 +11,13 @@ logger = logging.getLogger("lockin.notifications")
 
 VAPID_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".vapid_keys.json")
 
+DEFAULT_VAPID_PUB = "BMZiB3VFUwDpd0RUTX24kTrzKVQlrK2Ob1aOW3GS5kFzH2bGFUJA2_Gznq53tab7IAzHAAxZ-wkYWmC5t1YsZjY"
+DEFAULT_VAPID_PRIV = """-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgclWdnoAQqQS7hbYn
+tz1UI9CFL5wpgWYOs3BovfI37DihRANCAATGYgd1RVMA6XdEVE19uJE68ylUJayt
+jm9WjltxkuZBcx9mxhVCQNvxs56ud7Wm+yAMxwAMWfsJGFpgubdWLGY2
+-----END PRIVATE KEY-----"""
+
 def get_or_create_vapid_keys() -> Dict[str, str]:
     env_priv = os.getenv("VAPID_PRIVATE_KEY")
     env_pub = os.getenv("VAPID_PUBLIC_KEY")
@@ -32,45 +39,59 @@ def get_or_create_vapid_keys() -> Dict[str, str]:
         except Exception as e:
             logger.warning(f"Failed to read {VAPID_FILE}: {e}")
 
-    try:
-        from cryptography.hazmat.primitives.asymmetric import ec
-        from cryptography.hazmat.primitives import serialization
-        import base64
-
-        private_key_obj = ec.generate_private_key(ec.SECP256R1())
-        priv_pem = private_key_obj.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption()
-        ).decode("utf-8")
-
-        pub_raw = private_key_obj.public_key().public_bytes(
-            serialization.Encoding.X962,
-            serialization.PublicFormat.UncompressedPoint
-        )
-        pub_b64url = base64.urlsafe_b64encode(pub_raw).decode("utf-8").rstrip("=")
-
-        keys_data = {
-            "private_key": priv_pem,
-            "public_key": pub_b64url,
-            "claims_sub": env_claims
-        }
-
-        with open(VAPID_FILE, "w") as f:
-            json.dump(keys_data, f, indent=2)
-
-        return keys_data
-    except Exception as err:
-        logger.error(f"Error generating VAPID keys: {err}")
-        return {
-            "private_key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg4u6p2eWz...\n-----END PRIVATE KEY-----",
-            "public_key": "BOxf1pXc_cbPWB8_yr0DZvdzR_eH_Yfh8iPj1rLM1W_e_r_k2q9A2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p7q8r9g",
-            "claims_sub": "mailto:operator@lockin.app"
-        }
+    # Fallback to persistent deterministic keypair (ensures push remains valid across ephemeral restarts)
+    return {
+        "private_key": DEFAULT_VAPID_PRIV,
+        "public_key": DEFAULT_VAPID_PUB,
+        "claims_sub": env_claims
+    }
 
 def get_vapid_public_key() -> str:
     keys = get_or_create_vapid_keys()
     return keys["public_key"]
+
+TIME_BLOCK_METADATA = {
+    "morning": {
+        "name": "Morning Lock-In",
+        "icon": "☀️",
+        "quotes": [
+            "Win the morning, win the day. Eliminate distractions and execute.",
+            "Discipline is choosing between what you want now and what you want most.",
+            "The secret of getting ahead is getting started. Deep work begins now.",
+            "Energy flows where attention goes. Protect your morning focus."
+        ],
+    },
+    "afternoon": {
+        "name": "Afternoon Momentum",
+        "icon": "✨",
+        "quotes": [
+            "Midday check-in: Push through resistance. Champions build momentum when others fade.",
+            "Consistency over intensity. Keep stacking daily wins.",
+            "Don't stop when you're tired; stop when you're done.",
+            "Small daily improvements over time lead to stunning transformations."
+        ],
+    },
+    "evening": {
+        "name": "Evening Surge",
+        "icon": "🌇",
+        "quotes": [
+            "Finish the day strong. Review your goals and close all open loops.",
+            "Discipline in the evening sets the foundation for tomorrow's victory.",
+            "How you finish today determines how you start tomorrow.",
+            "Reflect, review, and lock in your evening routines."
+        ],
+    },
+    "night": {
+        "name": "Night Protocol & Recovery",
+        "icon": "🌙",
+        "quotes": [
+            "Rest is fuel for tomorrow's battle. Wind down and recharge.",
+            "Celebrate today's wins, let go of the friction, and prepare your mindset.",
+            "Sleep is the ultimate performance enhancer. Lock in your sleep protocol.",
+            "Another day locked in. Recharge your mind for tomorrow."
+        ],
+    },
+}
 
 def calculate_random_morning_time() -> str:
     import random
@@ -79,6 +100,75 @@ def calculate_random_morning_time() -> str:
     if hour == 6 and minute < 30:
         minute = random.randint(30, 59)
     return f"{hour:02d}:{minute:02d}"
+
+def build_time_block_briefing_payload(user: User, db: Session, time_block: str = "morning") -> Dict[str, Any]:
+    import random
+    tb_key = time_block.lower() if time_block else "morning"
+    if tb_key not in TIME_BLOCK_METADATA:
+        tb_key = "morning"
+
+    meta = TIME_BLOCK_METADATA[tb_key]
+    quote = random.choice(meta["quotes"])
+
+    tasks = db.query(Task).filter(Task.user_id == user.id).all()
+    uncompleted_tasks = [t for t in tasks if not t.completed]
+    block_tasks = [t for t in uncompleted_tasks if (t.time_block or 'morning').lower() == tb_key]
+
+    total_tasks = len(tasks)
+    day_num = user.day_number or 1
+    total_days = user.total_days_goal or 90
+    streak = user.streak_days or 1
+
+    title = f"{meta['icon']} {meta['name']} — Day {day_num} of {total_days}"
+
+    task_count = len(block_tasks)
+    total_remaining = len(uncompleted_tasks)
+
+    if total_tasks == 0:
+        body = (
+            f"Day {day_num} Protocol ({meta['icon']} {meta['name']}): 0 tasks set.\n"
+            f"💡 \"{quote}\"\n"
+            f"🔥 Streak: {streak} days. Open Lock-In to set habits!"
+        )
+    elif total_remaining == 0:
+        body = (
+            f"Day {day_num}: All tasks 100% completed today!\n"
+            f"💡 \"{quote}\"\n"
+            f"🔥 Streak: {streak} days active. Outstanding discipline!"
+        )
+    elif task_count == 0:
+        body = (
+            f"Day {day_num}: All {meta['name']} tasks finished! ({total_remaining} left in other blocks).\n"
+            f"💡 \"{quote}\"\n"
+            f"🔥 Streak: {streak} days active."
+        )
+    else:
+        task_preview = "\n".join([f"• {t.name}" for t in block_tasks[:2]])
+        if task_count > 2:
+            task_preview += f"\n• +{task_count - 2} more"
+
+        body = (
+            f"Day {day_num}: You have {task_count} {tb_key.capitalize()} task{'s' if task_count != 1 else ''} ({total_remaining} left today):\n"
+            f"{task_preview}\n"
+            f"💡 \"{quote}\"\n"
+            f"🔥 Streak: {streak} days. Lock in!"
+        )
+
+    return {
+        "title": title,
+        "body": body,
+        "icon": "/icon-192.png",
+        "badge": "/icon-192.png",
+        "dayNumber": day_num,
+        "totalDays": total_days,
+        "streakDays": streak,
+        "timeBlock": tb_key,
+        "blockTasksCount": task_count,
+        "remainingTasks": total_remaining,
+        "quote": quote,
+        "url": "/",
+        "timestamp": datetime.utcnow().isoformat(),
+    }
 
 def build_daily_briefing_payload(user: User, db: Session) -> Dict[str, Any]:
     tasks = db.query(Task).filter(Task.user_id == user.id).all()
@@ -171,6 +261,27 @@ def send_daily_briefing_to_user(user: User, db: Session) -> Dict[str, Any]:
     ).all()
 
     payload = build_daily_briefing_payload(user, db)
+    sent_count = 0
+
+    for sub in subs:
+        if send_push_notification(sub, payload):
+            sent_count += 1
+
+    db.commit()
+    return {
+        "success": True,
+        "sentCount": sent_count,
+        "totalSubscriptions": len(subs),
+        "payload": payload,
+    }
+
+def send_time_block_briefing_to_user(user: User, db: Session, time_block: str = "morning") -> Dict[str, Any]:
+    subs = db.query(PushSubscription).filter(
+        PushSubscription.user_id == user.id,
+        PushSubscription.is_active == True
+    ).all()
+
+    payload = build_time_block_briefing_payload(user, db, time_block)
     sent_count = 0
 
     for sub in subs:

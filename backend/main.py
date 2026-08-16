@@ -1,14 +1,20 @@
 import os
+import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
-from backend.database import engine, get_db, Base
+from backend.database import engine, get_db, Base, SessionLocal
 from backend.models import User, Pillar, Task, Routine, ProteinLog, TaskLog, RoutineLog, PushSubscription
 from backend.auth import get_current_user
 from backend import schemas
 from sqlalchemy import text
 from datetime import datetime, timedelta
+
+logger = logging.getLogger("lockin.scheduler")
 
 # Create database tables automatically upon startup
 Base.metadata.create_all(bind=engine)
@@ -25,7 +31,72 @@ for migration_sql in [
     except Exception:
         pass
 
-app = FastAPI(title="Lock-In Protocol API (FastAPI + Supabase PostgreSQL + SQLAlchemy)")
+# ---------------------------------------------------------------------------
+# Background Scheduler: sends push notifications at each time block
+# ---------------------------------------------------------------------------
+
+def dispatch_time_block_briefings(time_block: str):
+    """Called by APScheduler — sends push for all active subscriptions for this time block."""
+    from backend.notifications import send_time_block_briefing_to_user
+    db = SessionLocal()
+    try:
+        users = db.query(User).join(
+            PushSubscription,
+            PushSubscription.user_id == User.id
+        ).filter(PushSubscription.is_active == True).distinct().all()
+
+        sent_total = 0
+        for user in users:
+            try:
+                result = send_time_block_briefing_to_user(user, db, time_block)
+                sent_total += result.get("sentCount", 0)
+            except Exception as e:
+                logger.warning(f"Failed sending {time_block} push for user {user.id}: {e}")
+
+        logger.info(f"[Scheduler] {time_block.capitalize()} briefing: sent {sent_total} push(es) to {len(users)} user(s).")
+    except Exception as e:
+        logger.error(f"[Scheduler] Error in {time_block} dispatch: {e}")
+    finally:
+        db.close()
+
+
+scheduler = BackgroundScheduler(timezone="UTC")
+
+# ☀️  Morning:   07:00 IST = 01:30 UTC
+# ✨  Afternoon: 12:30 IST = 07:00 UTC
+# 🌇  Evening:   17:30 IST = 12:00 UTC
+# 🌙  Night:     21:30 IST = 16:00 UTC
+TIME_BLOCK_SCHEDULE = [
+    {"block": "morning",   "hour": 1,  "minute": 30},
+    {"block": "afternoon", "hour": 7,  "minute": 0},
+    {"block": "evening",   "hour": 12, "minute": 0},
+    {"block": "night",     "hour": 16, "minute": 0},
+]
+
+for entry in TIME_BLOCK_SCHEDULE:
+    scheduler.add_job(
+        dispatch_time_block_briefings,
+        CronTrigger(hour=entry["hour"], minute=entry["minute"], timezone="UTC"),
+        args=[entry["block"]],
+        id=f"notify_{entry['block']}",
+        replace_existing=True,
+        misfire_grace_time=900,
+    )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler.start()
+    logger.info("[Scheduler] Time-block push notification scheduler started.")
+    yield
+    scheduler.shutdown(wait=False)
+    logger.info("[Scheduler] Scheduler stopped.")
+
+
+app = FastAPI(
+    title="Lock-In Protocol API (FastAPI + Supabase PostgreSQL + SQLAlchemy)",
+    lifespan=lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -804,6 +875,17 @@ def send_test_push_notification(
 ):
     from backend.notifications import send_daily_briefing_to_user
     result = send_daily_briefing_to_user(user, db)
+    return result
+
+@app.post("/api/notifications/test-block")
+def send_test_block_push_notification(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    time_block = request.query_params.get("timeBlock", "morning")
+    from backend.notifications import send_time_block_briefing_to_user
+    result = send_time_block_briefing_to_user(user, db, time_block)
     return result
 
 @app.post("/api/notifications/trigger-briefing")
