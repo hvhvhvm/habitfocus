@@ -244,20 +244,52 @@ export async function testTimeBlockNotification(
     const blockCount = blockTasks.length;
     const totalRemaining = uncompleted.length;
 
+    let proteinGoal = 140;
+    let totalProtein = 0;
+    try {
+      const savedGoal = localStorage.getItem('lockin_protein_goal');
+      if (savedGoal) proteinGoal = Number(savedGoal) || 140;
+      const savedLogs = localStorage.getItem('lockin_protein_entries');
+      if (savedLogs) {
+        const parsed = JSON.parse(savedLogs);
+        if (Array.isArray(parsed)) {
+          totalProtein = parsed.reduce((sum: number, item: any) => sum + (Number(item.protein_grams || item.grams || 0) || 0), 0);
+        }
+      }
+    } catch (e) {}
+
+    const remProtein = Math.max(0, proteinGoal - totalProtein);
+    let proteinLine = '';
+    if (timeBlock === 'morning') {
+      proteinLine = `🥩 Protein Goal: ${proteinGoal}g`;
+    } else if (timeBlock === 'afternoon') {
+      proteinLine = totalProtein >= proteinGoal
+        ? `🥩 Protein: ${totalProtein}g/${proteinGoal}g (Goal Met! 🏆)`
+        : `🥩 Protein: ${totalProtein}g/${proteinGoal}g (${remProtein}g left for lunch/snacks)`;
+    } else if (timeBlock === 'evening') {
+      proteinLine = totalProtein >= proteinGoal
+        ? `🥩 Protein: ${totalProtein}g/${proteinGoal}g (Goal Met! 🏆)`
+        : `🥩 Protein: ${totalProtein}g/${proteinGoal}g (${remProtein}g left — time for dinner/shake!)`;
+    } else {
+      proteinLine = totalProtein >= proteinGoal
+        ? `🥩 Protein: ${totalProtein}g/${proteinGoal}g (+20 PTS Earned! 🏆)`
+        : `🥩 Protein: ${totalProtein}g/${proteinGoal}g (${remProtein}g remaining today)`;
+    }
+
     const title = `${meta.icon} ${meta.name} — Day ${dayNum} of ${totalDays}`;
     let body = '';
 
     if (blockCount === 0 && totalRemaining === 0) {
-      body = `Day ${dayNum}: All tasks 100% done! 🏆\n💡 "${quote}"\n🔥 Streak: ${streak} days. Incredible discipline!`;
+      body = `Day ${dayNum}: All tasks 100% done! 🏆\n${proteinLine}\n💡 "${quote}"\n🔥 Streak: ${streak} days. Incredible discipline!`;
     } else if (blockCount === 0) {
-      body = `Day ${dayNum}: All ${meta.name} tasks finished! (${totalRemaining} left in other blocks)\n💡 "${quote}"\n🔥 Streak: ${streak} days active.`;
+      body = `Day ${dayNum}: All ${meta.name} tasks finished! (${totalRemaining} left in other blocks)\n${proteinLine}\n💡 "${quote}"\n🔥 Streak: ${streak} days active.`;
     } else {
       const preview = blockTasks
         .slice(0, 2)
         .map((t: any) => `• ${t.name}`)
         .join('\n');
       const extra = blockCount > 2 ? `\n• +${blockCount - 2} more` : '';
-      body = `Day ${dayNum}: ${blockCount} ${timeBlock.charAt(0).toUpperCase() + timeBlock.slice(1)} task${blockCount !== 1 ? 's' : ''} (${totalRemaining} left today):\n${preview}${extra}\n💡 "${quote}"\n🔥 Streak: ${streak} days. Lock in!`;
+      body = `Day ${dayNum}: ${blockCount} ${timeBlock.charAt(0).toUpperCase() + timeBlock.slice(1)} task${blockCount !== 1 ? 's' : ''} (${totalRemaining} left today):\n${preview}${extra}\n${proteinLine}\n💡 "${quote}"\n🔥 Streak: ${streak} days. Lock in!`;
     }
 
     if ('serviceWorker' in navigator) {

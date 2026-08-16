@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List
 from pywebpush import webpush, WebPushException
 from sqlalchemy.orm import Session
-from backend.models import User, Task, Routine, PushSubscription
+from backend.models import User, Task, Routine, PushSubscription, ProteinLog
 
 logger = logging.getLogger("lockin.notifications")
 
@@ -119,6 +119,34 @@ def build_time_block_briefing_payload(user: User, db: Session, time_block: str =
     total_days = user.total_days_goal or 90
     streak = user.streak_days or 1
 
+    # Fetch today's protein logs for user
+    today_str = datetime.utcnow().strftime("%Y-%m-%d")
+    protein_goal = user.protein_goal or 140
+    protein_logs = db.query(ProteinLog).filter(
+        ProteinLog.user_id == user.id,
+        (ProteinLog.logged_date == today_str) | (ProteinLog.logged_date == "") | (ProteinLog.logged_date == None)
+    ).all()
+    total_protein = sum(p.protein_grams for p in protein_logs)
+    rem_protein = max(0, protein_goal - total_protein)
+
+    if tb_key == "morning":
+        protein_line = f"🥩 Protein Goal: {protein_goal}g"
+    elif tb_key == "afternoon":
+        if total_protein >= protein_goal:
+            protein_line = f"🥩 Protein: {total_protein}g/{protein_goal}g (Goal Met! 🏆)"
+        else:
+            protein_line = f"🥩 Protein: {total_protein}g/{protein_goal}g ({rem_protein}g left for lunch/snacks)"
+    elif tb_key == "evening":
+        if total_protein >= protein_goal:
+            protein_line = f"🥩 Protein: {total_protein}g/{protein_goal}g (Goal Met! 🏆)"
+        else:
+            protein_line = f"🥩 Protein: {total_protein}g/{protein_goal}g ({rem_protein}g left — time for dinner/shake!)"
+    else:  # night
+        if total_protein >= protein_goal:
+            protein_line = f"🥩 Protein: {total_protein}g/{protein_goal}g (+20 PTS Earned! 🏆)"
+        else:
+            protein_line = f"🥩 Protein: {total_protein}g/{protein_goal}g ({rem_protein}g remaining today)"
+
     title = f"{meta['icon']} {meta['name']} — Day {day_num} of {total_days}"
 
     task_count = len(block_tasks)
@@ -127,18 +155,21 @@ def build_time_block_briefing_payload(user: User, db: Session, time_block: str =
     if total_tasks == 0:
         body = (
             f"Day {day_num} Protocol ({meta['icon']} {meta['name']}): 0 tasks set.\n"
+            f"{protein_line}\n"
             f"💡 \"{quote}\"\n"
             f"🔥 Streak: {streak} days. Open Lock-In to set habits!"
         )
     elif total_remaining == 0:
         body = (
             f"Day {day_num}: All tasks 100% completed today!\n"
+            f"{protein_line}\n"
             f"💡 \"{quote}\"\n"
             f"🔥 Streak: {streak} days active. Outstanding discipline!"
         )
     elif task_count == 0:
         body = (
             f"Day {day_num}: All {meta['name']} tasks finished! ({total_remaining} left in other blocks).\n"
+            f"{protein_line}\n"
             f"💡 \"{quote}\"\n"
             f"🔥 Streak: {streak} days active."
         )
@@ -150,6 +181,7 @@ def build_time_block_briefing_payload(user: User, db: Session, time_block: str =
         body = (
             f"Day {day_num}: You have {task_count} {tb_key.capitalize()} task{'s' if task_count != 1 else ''} ({total_remaining} left today):\n"
             f"{task_preview}\n"
+            f"{protein_line}\n"
             f"💡 \"{quote}\"\n"
             f"🔥 Streak: {streak} days. Lock in!"
         )
