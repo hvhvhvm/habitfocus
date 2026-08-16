@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { api } from '../../lib/api';
 import {
   requestPushNotificationSubscription,
+  ensurePushSubscriptionActive,
   testMobilePushNotification,
   testTimeBlockNotification,
   getNotificationPermissionState,
@@ -38,14 +39,39 @@ export const NotificationSettingsModal: React.FC = () => {
 
   useEffect(() => {
     if (!isNotificationModalOpen) return;
-    setPermissionState(getNotificationPermissionState());
+    const perm = getNotificationPermissionState();
+    setPermissionState(perm);
+
+    let localActive = false;
+    try {
+      const saved = localStorage.getItem('lockin_push_sub');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.isActive) localActive = true;
+      }
+    } catch (e) {}
+
+    if (perm === 'granted' || localActive) {
+      setIsSubscribed(true);
+      ensurePushSubscriptionActive().catch(() => {});
+    }
 
     api.getNotificationStatus()
       .then((res) => {
-        setIsSubscribed(res.isSubscribed);
+        if (res.isSubscribed) {
+          setIsSubscribed(true);
+        } else if (perm === 'granted' || localActive) {
+          ensurePushSubscriptionActive().then((synced) => {
+            if (synced) setIsSubscribed(true);
+          });
+        }
         if (res.preferredTime) setPreferredTime(res.preferredTime);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (perm === 'granted' || localActive) {
+          setIsSubscribed(true);
+        }
+      });
   }, [isNotificationModalOpen]);
 
   if (!isNotificationModalOpen) return null;

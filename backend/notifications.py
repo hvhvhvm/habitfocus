@@ -259,6 +259,9 @@ def build_daily_briefing_payload(user: User, db: Session) -> Dict[str, Any]:
     }
 
 def send_push_notification(subscription: PushSubscription, payload: Dict[str, Any]) -> bool:
+    if not subscription.endpoint or subscription.endpoint == "local_device" or not subscription.endpoint.startswith("http"):
+        return False
+
     vapid_keys = get_or_create_vapid_keys()
     sub_info = {
         "endpoint": subscription.endpoint,

@@ -26,7 +26,76 @@ export function getNotificationPermissionState(): NotificationPermission {
   return Notification.permission;
 }
 
-export async function requestPushNotificationSubscription(preferredTime: string = 'random_morning'): Promise<{ success: boolean; error?: string }> {
+export async function getServiceWorkerRegistration(): Promise<ServiceWorkerRegistration | null> {
+  if (!('serviceWorker' in navigator)) return null;
+  try {
+    let reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) {
+      reg = await navigator.serviceWorker.register('/sw.js');
+    }
+    await navigator.serviceWorker.ready;
+    return reg;
+  } catch (err) {
+    console.warn('Could not get/register service worker:', err);
+    return null;
+  }
+}
+
+export async function ensurePushSubscriptionActive(): Promise<boolean> {
+  try {
+    if (!('Notification' in window) || Notification.permission !== 'granted') {
+      return false;
+    }
+
+    const reg = await getServiceWorkerRegistration();
+    if (!reg || !('pushManager' in reg)) return false;
+
+    let publicKey = DEFAULT_VAPID_PUBLIC_KEY;
+    try {
+      const vapidRes = await api.getVapidPublicKey().catch(() => null);
+      if (vapidRes?.publicKey) publicKey = vapidRes.publicKey;
+    } catch (e) {}
+
+    const convertedVapidKey = urlBase64ToUint8Array(publicKey);
+    let subscription = await reg.pushManager.getSubscription().catch(() => null);
+
+    if (!subscription) {
+      subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: convertedVapidKey,
+      });
+    }
+
+    const subJson = subscription.toJSON();
+    const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+    if (subJson?.endpoint && subJson?.keys?.p256dh && subJson?.keys?.auth) {
+      await api.subscribePush({
+        endpoint: subJson.endpoint,
+        keys: {
+          p256dh: subJson.keys.p256dh,
+          auth: subJson.keys.auth,
+        },
+        preferredTime: '07:00',
+        timezone: userTimezone,
+      });
+
+      localStorage.setItem('lockin_push_sub', JSON.stringify({
+        endpoint: subJson.endpoint,
+        keys: subJson.keys,
+        isActive: true,
+        updatedAt: new Date().toISOString(),
+      }));
+      return true;
+    }
+    return false;
+  } catch (e) {
+    console.warn('Auto-sync push subscription notice:', e);
+    return false;
+  }
+}
+
+export async function requestPushNotificationSubscription(preferredTime: string = '07:00'): Promise<{ success: boolean; error?: string }> {
   try {
     if (!('Notification' in window)) {
       return { success: false, error: 'Notifications are not supported on this browser.' };
@@ -42,10 +111,7 @@ export async function requestPushNotificationSubscription(preferredTime: string 
     }
 
     // 2. Ready Service Worker
-    let registration: ServiceWorkerRegistration | null = null;
-    if ('serviceWorker' in navigator) {
-      registration = await navigator.serviceWorker.ready.catch(() => null);
-    }
+    const registration = await getServiceWorkerRegistration();
 
     // 3. Obtain VAPID Public Key (with resilient fallback)
     let publicKey = DEFAULT_VAPID_PUBLIC_KEY;
@@ -60,21 +126,18 @@ export async function requestPushNotificationSubscription(preferredTime: string 
 
     let subJson: any = null;
 
-    // 4. Try Web PushManager subscription if supported
+    // 4. Web PushManager subscription
     if (registration && 'pushManager' in registration) {
-      try {
-        const convertedVapidKey = urlBase64ToUint8Array(publicKey);
-        let subscription = await registration.pushManager.getSubscription().catch(() => null);
-        if (!subscription) {
-          subscription = await registration.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: convertedVapidKey,
-          });
-        }
-        subJson = subscription.toJSON();
-      } catch (pushErr) {
-        console.warn('PushManager subscription warning:', pushErr);
+      const convertedVapidKey = urlBase64ToUint8Array(publicKey);
+      let subscription = await registration.pushManager.getSubscription().catch(() => null);
+
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: convertedVapidKey,
+        });
       }
+      subJson = subscription.toJSON();
     }
 
     const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -90,19 +153,21 @@ export async function requestPushNotificationSubscription(preferredTime: string 
     };
     localStorage.setItem('lockin_push_sub', JSON.stringify(localSubRecord));
 
-    // 6. Attempt syncing to FastAPI backend without blocking offline mode
+    // 6. Sync to FastAPI backend and await confirmation
     if (subJson?.endpoint && subJson?.keys?.p256dh && subJson?.keys?.auth) {
-      api.subscribePush({
-        endpoint: subJson.endpoint,
-        keys: {
-          p256dh: subJson.keys.p256dh,
-          auth: subJson.keys.auth,
-        },
-        preferredTime,
-        timezone: userTimezone,
-      }).catch((err) => {
-        console.warn('Backend push registration synced in local mode:', err);
-      });
+      try {
+        await api.subscribePush({
+          endpoint: subJson.endpoint,
+          keys: {
+            p256dh: subJson.keys.p256dh,
+            auth: subJson.keys.auth,
+          },
+          preferredTime,
+          timezone: userTimezone,
+        });
+      } catch (err) {
+        console.warn('Backend push registration sync issue:', err);
+      }
     }
 
     return { success: true };

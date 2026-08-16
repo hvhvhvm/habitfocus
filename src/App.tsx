@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppProvider, useApp } from './context/AppContext';
+import { ensurePushSubscriptionActive } from './lib/notifications';
 import { TopHeader } from './components/TopHeader';
 import { MomentumRing } from './components/MomentumRing';
 import { HeroFocusCard } from './components/HeroFocusCard';
@@ -67,6 +68,12 @@ const ProtectedGate: React.FC = () => {
 const MainContent: React.FC = () => {
   const { isAuthenticated, isLoading } = useAuth();
   const { activeTab, viewMode, currentBlock } = useApp();
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      ensurePushSubscriptionActive().catch(() => {});
+    }
+  }, [isAuthenticated]);
 
   if (isLoading) {
     return (
