@@ -52,9 +52,14 @@ def check_and_perform_rollover(user: User, db: Session, local_date: str) -> bool
 
 
 def execute_rollover_logic(user: User, db: Session, days_passed: int, local_date: str):
+    from backend.models import TaskLog, RoutineLog
+
+    # Date being rolled over from (yesterday from user's perspective)
+    rollover_date = user.last_active_date or local_date
+
     # 1. Determine if streak is maintained from the last active day
     user_tasks = db.query(Task).filter(Task.user_id == user.id).all()
-    completed_tasks = sum(1 for t in user_tasks if t.completed)
+    completed_tasks = [t for t in user_tasks if t.completed]
     total_tasks = len(user_tasks)
 
     # Streak is maintained if days_passed is exactly 1, and the user completed at least 1 task
@@ -63,7 +68,7 @@ def execute_rollover_logic(user: User, db: Session, days_passed: int, local_date
     if days_passed == 1:
         if total_tasks == 0:
             is_streak_maintained = True
-        elif completed_tasks > 0:
+        elif len(completed_tasks) > 0:
             is_streak_maintained = True
 
     if is_streak_maintained:
@@ -74,12 +79,43 @@ def execute_rollover_logic(user: User, db: Session, days_passed: int, local_date
     # 2. Advance the day number
     user.day_number += days_passed
 
-    # 3. Reset task completions
+    # 3. Record TaskLog entries for completed tasks before resetting
+    for task in completed_tasks:
+        existing_log = db.query(TaskLog).filter(
+            TaskLog.task_id == task.id,
+            TaskLog.completed_date == rollover_date
+        ).first()
+        if not existing_log:
+            log_entry = TaskLog(
+                task_id=task.id,
+                user_id=user.id,
+                completed_date=rollover_date,
+                points_awarded=task.points,
+            )
+            db.add(log_entry)
+
+    # 4. Reset task completions
     for task in user_tasks:
         task.completed = False
 
-    # 4. Reset routine completions
+    # 5. Record RoutineLog entries for completed routines before resetting
     user_routines = db.query(Routine).filter(Routine.user_id == user.id).all()
+    completed_routines = [r for r in user_routines if r.completed]
+    for routine in completed_routines:
+        existing_log = db.query(RoutineLog).filter(
+            RoutineLog.routine_id == routine.id,
+            RoutineLog.completed_date == rollover_date
+        ).first()
+        if not existing_log:
+            log_entry = RoutineLog(
+                routine_id=routine.id,
+                user_id=user.id,
+                completed_date=rollover_date,
+                points_awarded=75,
+            )
+            db.add(log_entry)
+
+    # 6. Reset routine completions and subtasks
     for routine in user_routines:
         routine.completed = False
         if routine.subtasks:
@@ -90,10 +126,15 @@ def execute_rollover_logic(user: User, db: Session, days_passed: int, local_date
                 updated_subtasks.append(st_copy)
             routine.subtasks = updated_subtasks
 
-    # 5. Clear protein log
-    db.query(ProteinLog).filter(ProteinLog.user_id == user.id).delete()
+    # 7. Tag protein logs with their date so history is preserved (do NOT delete them)
+    untagged_protein_logs = db.query(ProteinLog).filter(
+        ProteinLog.user_id == user.id,
+        (ProteinLog.logged_date == None) | (ProteinLog.logged_date == "")
+    ).all()
+    for plog in untagged_protein_logs:
+        plog.logged_date = rollover_date
 
-    # 6. Update last active date
+    # 8. Update last active date
     user.last_active_date = local_date
 
     db.commit()

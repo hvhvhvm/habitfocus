@@ -16,6 +16,8 @@ import { AddPillarModal } from './components/modals/AddPillarModal';
 import { AddRoutineModal } from './components/modals/AddRoutineModal';
 import { AIRoutineModal } from './components/modals/AIRoutineModal';
 import { AuthModal } from './components/modals/AuthModal';
+import { NotificationSettingsModal } from './components/modals/NotificationSettingsModal';
+import { DayRoadmapModal } from './components/modals/DayRoadmapModal';
 import { Lock, ShieldAlert, Zap, KeyRound } from 'lucide-react';
 
 const ProtectedGate: React.FC = () => {
@@ -150,6 +152,8 @@ const MainContent: React.FC = () => {
       <AddRoutineModal />
       <AIRoutineModal />
       <AuthModal />
+      <NotificationSettingsModal />
+      <DayRoadmapModal />
     </div>
   );
 };

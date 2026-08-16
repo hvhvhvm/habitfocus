@@ -27,6 +27,9 @@ class User(Base):
     tasks = relationship("Task", back_populates="user", cascade="all, delete-orphan")
     routines = relationship("Routine", back_populates="user", cascade="all, delete-orphan")
     protein_logs = relationship("ProteinLog", back_populates="user", cascade="all, delete-orphan")
+    task_logs = relationship("TaskLog", back_populates="user", cascade="all, delete-orphan")
+    routine_logs = relationship("RoutineLog", back_populates="user", cascade="all, delete-orphan")
+    push_subscriptions = relationship("PushSubscription", back_populates="user", cascade="all, delete-orphan")
 
     def to_dict(self):
         # Sync level dynamically (400 points per level, starting at lvl 1, default 1250 gives lvl 4)
@@ -88,6 +91,7 @@ class Task(Base):
 
     user = relationship("User", back_populates="tasks")
     pillar = relationship("Pillar", back_populates="tasks")
+    logs = relationship("TaskLog", back_populates="task", cascade="all, delete-orphan")
 
     def to_dict(self):
         return {
@@ -116,6 +120,7 @@ class Routine(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="routines")
+    logs = relationship("RoutineLog", back_populates="routine", cascade="all, delete-orphan")
 
     def to_dict(self):
         return {
@@ -139,6 +144,7 @@ class ProteinLog(Base):
     food_name = Column(String, nullable=False)
     protein_grams = Column(Integer, nullable=False)
     logged_time = Column(String, default="Today")
+    logged_date = Column(String, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="protein_logs")
@@ -150,4 +156,77 @@ class ProteinLog(Base):
             "foodName": self.food_name,
             "proteinGrams": self.protein_grams,
             "time": self.logged_time,
+            "loggedDate": self.logged_date,
+        }
+
+class TaskLog(Base):
+    __tablename__ = "task_logs"
+
+    id = Column(String, primary_key=True, default=generate_uuid, index=True)
+    task_id = Column(String, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    completed_date = Column(String, nullable=False, index=True) # YYYY-MM-DD
+    points_awarded = Column(Integer, default=50)
+    completed_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="task_logs")
+    task = relationship("Task", back_populates="logs")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "taskId": self.task_id,
+            "userId": self.user_id,
+            "completedDate": self.completed_date,
+            "pointsAwarded": self.points_awarded,
+            "completedAt": self.completed_at.isoformat() if self.completed_at else None,
+        }
+
+class RoutineLog(Base):
+    __tablename__ = "routine_logs"
+
+    id = Column(String, primary_key=True, default=generate_uuid, index=True)
+    routine_id = Column(String, ForeignKey("routines.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    completed_date = Column(String, nullable=False, index=True) # YYYY-MM-DD
+    points_awarded = Column(Integer, default=75)
+    completed_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="routine_logs")
+    routine = relationship("Routine", back_populates="logs")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "routineId": self.routine_id,
+            "userId": self.user_id,
+            "completedDate": self.completed_date,
+            "pointsAwarded": self.points_awarded,
+            "completedAt": self.completed_at.isoformat() if self.completed_at else None,
+        }
+
+class PushSubscription(Base):
+    __tablename__ = "push_subscriptions"
+
+    id = Column(String, primary_key=True, default=generate_uuid, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    endpoint = Column(Text, nullable=False)
+    p256dh = Column(Text, nullable=False)
+    auth = Column(Text, nullable=False)
+    preferred_time = Column(String, default="08:00") # Format: "08:00"
+    timezone = Column(String, default="UTC")
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="push_subscriptions")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "userId": self.user_id,
+            "endpoint": self.endpoint,
+            "preferredTime": self.preferred_time,
+            "timezone": self.timezone,
+            "isActive": self.is_active,
+            "createdAt": self.created_at.isoformat() if self.created_at else None,
         }

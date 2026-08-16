@@ -26,6 +26,10 @@ interface AppContextType {
   setIsAIRoutineOpen: (open: boolean) => void;
   isAuthModalOpen: boolean;
   setIsAuthModalOpen: (open: boolean) => void;
+  isNotificationModalOpen: boolean;
+  setIsNotificationModalOpen: (open: boolean) => void;
+  isDayRoadmapModalOpen: boolean;
+  setIsDayRoadmapModalOpen: (open: boolean) => void;
   
   // Derived state & helpers
   currentBlock: TimeBlock;
@@ -170,6 +174,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [routineDefaultTimeBlock, setRoutineDefaultTimeBlock] = useState<TimeBlock>('morning');
   const [isAIRoutineOpen, setIsAIRoutineOpen] = useState<boolean>(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [isNotificationModalOpen, setIsNotificationModalOpen] = useState<boolean>(false);
+  const [isDayRoadmapModalOpen, setIsDayRoadmapModalOpen] = useState<boolean>(false);
 
   const openAddRoutineModalForBlock = (tb?: TimeBlock) => {
     if (tb) setRoutineDefaultTimeBlock(tb);
@@ -229,11 +235,92 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [isAuthenticated, updateUserInContext]);
 
+  // Syncs any locally-created data (userId === 'local') to the backend on login.
+  // Called once when isAuthenticated transitions from false → true.
+  const syncLocalDataToBackend = useCallback(async () => {
+    if (!isAuthenticated) return;
+
+    const localPillars = pillars.filter((p) => p.userId === 'local');
+    const localTasks = tasks.filter((t) => t.userId === 'local');
+    const localRoutines = routines.filter((r) => r.userId === 'local');
+    const localProteinEntries = (proteinData?.entries || []).filter((e) => e.userId === 'local');
+
+    if (
+      localPillars.length === 0 &&
+      localTasks.length === 0 &&
+      localRoutines.length === 0 &&
+      localProteinEntries.length === 0
+    ) {
+      return; // Nothing to migrate
+    }
+
+    const pillarIdMap: Record<string, string> = {};
+
+    for (const p of localPillars) {
+      try {
+        const serverPillar = await api.createPillar({
+          name: p.name,
+          icon: p.icon,
+          color: p.color,
+          dailyGoal: p.dailyGoal,
+        });
+        if (serverPillar?.id) pillarIdMap[p.id] = serverPillar.id;
+      } catch (e) {
+        console.warn('Failed to sync local pillar:', p.name, e);
+      }
+    }
+
+    for (const t of localTasks) {
+      try {
+        const resolvedPillarId = pillarIdMap[t.pillarId] || t.pillarId;
+        await api.createTask({
+          pillarId: resolvedPillarId,
+          timeBlock: t.timeBlock as any,
+          name: t.name,
+          points: t.points,
+          repeatFrequency: t.repeatFrequency as any,
+        });
+      } catch (e) {
+        console.warn('Failed to sync local task:', t.name, e);
+      }
+    }
+
+    for (const r of localRoutines) {
+      try {
+        await api.createRoutine({
+          title: r.title,
+          icon: r.icon,
+          subtasks: r.subtasks,
+        } as any);
+      } catch (e) {
+        console.warn('Failed to sync local routine:', r.title, e);
+      }
+    }
+
+    for (const e of localProteinEntries) {
+      try {
+        await api.addProteinEntry(e.foodName, e.proteinGrams, e.time);
+      } catch (err) {
+        console.warn('Failed to sync local protein entry:', e.foodName, err);
+      }
+    }
+  }, [isAuthenticated, pillars, tasks, routines, proteinData]);
+
+  const hasSyncedRef = React.useRef(false);
+
   useEffect(() => {
     if (isAuthenticated) {
-      refreshData();
+      if (!hasSyncedRef.current) {
+        hasSyncedRef.current = true;
+        // First upload any local data, then refresh from backend
+        syncLocalDataToBackend().then(() => refreshData());
+      } else {
+        refreshData();
+      }
+    } else {
+      hasSyncedRef.current = false;
     }
-  }, [isAuthenticated, refreshData]);
+  }, [isAuthenticated, refreshData, syncLocalDataToBackend]);
 
   // Derived state calculations
   const totalTasksCount = tasks.length;
@@ -728,6 +815,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setIsAIRoutineOpen,
         isAuthModalOpen,
         setIsAuthModalOpen,
+        isNotificationModalOpen,
+        setIsNotificationModalOpen,
+        isDayRoadmapModalOpen,
+        setIsDayRoadmapModalOpen,
         currentBlock,
         heroFocusTask,
         nextFocusTask,

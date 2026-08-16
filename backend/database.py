@@ -10,7 +10,10 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL or DATABASE_URL.strip() == "":
-    DATABASE_URL = "sqlite:///./lockin_supabase.db"
+    backend_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(backend_dir)
+    db_path = os.path.join(project_root, "lockin_supabase.db")
+    DATABASE_URL = f"sqlite:///{db_path}"
 
 # Handle postgresql:// vs postgres:// URL prefix for SQLAlchemy
 if DATABASE_URL.startswith("postgres://"):

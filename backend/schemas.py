@@ -47,4 +47,20 @@ class AIRoutineRequest(BaseModel):
     timeAvailable: Optional[str] = "30 mins"
     focusArea: Optional[str] = "Productivity & Health"
 
+class PushSubscriptionKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+class PushSubscriptionCreate(BaseModel):
+    endpoint: str
+    keys: PushSubscriptionKeys
+    preferredTime: Optional[str] = "08:00"
+    timezone: Optional[str] = "UTC"
+
+class NotificationPreferencesUpdate(BaseModel):
+    preferredTime: Optional[str] = "08:00"
+    timezone: Optional[str] = "UTC"
+    isActive: Optional[bool] = True
+
+
 

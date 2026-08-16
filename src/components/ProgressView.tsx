@@ -8,7 +8,7 @@ import { Flame, Trophy, Target, Zap, ShieldAlert, Award } from 'lucide-react';
 
 export const ProgressView: React.FC = () => {
   const { user } = useAuth();
-  const { pillars, tasks, completionRate } = useApp();
+  const { pillars, tasks, completionRate, setIsDayRoadmapModalOpen } = useApp();
   const [statsData, setStatsData] = useState<any>(null);
   const [isLoadingStats, setIsLoadingStats] = useState<boolean>(true);
 
@@ -26,15 +26,20 @@ export const ProgressView: React.FC = () => {
     loadStats();
   }, [tasks]);
 
-  const weeklyData = statsData?.weeklyData || [
-    { day: 'Mon', completed: 4, total: 5, points: 60 },
-    { day: 'Tue', completed: 5, total: 5, points: 75 },
-    { day: 'Wed', completed: 3, total: 5, points: 45 },
-    { day: 'Thu', completed: 4, total: 5, points: 60 },
-    { day: 'Fri', completed: 5, total: 5, points: 75 },
-    { day: 'Sat', completed: 2, total: 5, points: 30 },
-    { day: 'Sun', completed: tasks.filter((t) => t.completed).length, total: tasks.length || 5, points: tasks.filter((t) => t.completed).length * 15 },
-  ];
+  const today = new Date();
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  const weeklyData = statsData?.weeklyData || Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(today);
+    d.setDate(today.getDate() - (6 - i));
+    const isToday = i === 6;
+    return {
+      day: dayNames[d.getDay()],
+      completed: isToday ? tasks.filter((t) => t.completed).length : 0,
+      total: isToday ? (tasks.length || 5) : 5,
+      points: isToday ? tasks.filter((t) => t.completed).length * 15 : 0,
+    };
+  });
 
   return (
     <div className="pb-24">
@@ -142,6 +147,58 @@ export const ProgressView: React.FC = () => {
               </Bar>
             </BarChart>
           </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* 90-Day Protocol Journey Timeline */}
+      <div className="bg-[#16201B] border border-[#26332C] rounded-2xl p-5 mb-6 shadow-md">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="font-space font-semibold text-base text-[#F4F6F5] flex items-center gap-2">
+              <Target className="w-5 h-5 text-[#3ECF8E]" /> 90-Day Protocol Journey
+            </h3>
+            <p className="font-mono-code text-xs text-[#8A9891]">
+              Day {user?.dayNumber || 1} of {user?.totalDaysGoal || 90} completed
+            </p>
+          </div>
+          <button
+            onClick={() => setIsDayRoadmapModalOpen(true)}
+            className="font-mono-code text-xs text-[#3ECF8E] hover:text-[#32B87C] bg-[#3ECF8E]/10 border border-[#3ECF8E]/25 hover:border-[#3ECF8E]/50 px-3 py-1.5 rounded-full transition-all cursor-pointer"
+          >
+            View Full Calendar ➔
+          </button>
+        </div>
+
+        {/* Mini 30-Day Matrix Strip */}
+        <div className="grid grid-cols-6 sm:grid-cols-10 gap-2 mb-3">
+          {Array.from({ length: Math.min(30, user?.totalDaysGoal || 90) }, (_, i) => {
+            const dayNum = i + 1;
+            const isCurr = dayNum === (user?.dayNumber || 1);
+            const isPast = dayNum < (user?.dayNumber || 1);
+            return (
+              <button
+                key={dayNum}
+                onClick={() => setIsDayRoadmapModalOpen(true)}
+                className={`py-2 px-1.5 rounded-xl border flex flex-col items-center justify-center text-center transition-all cursor-pointer ${
+                  isCurr
+                    ? 'bg-[#3ECF8E]/20 border-[#3ECF8E] text-[#3ECF8E] font-bold ring-1 ring-[#3ECF8E]'
+                    : isPast
+                    ? 'bg-[#3ECF8E]/10 border-[#3ECF8E]/30 text-[#3ECF8E]'
+                    : 'bg-[#0F1512] border-[#26332C] text-[#5E6D66]'
+                }`}
+              >
+                <span className="font-space text-xs font-bold">{dayNum}</span>
+                <span className="text-[9px] font-mono-code mt-0.5">
+                  {isCurr ? '⚡' : isPast ? '✓' : '🔒'}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center justify-between text-[11px] font-mono-code text-[#8A9891] pt-2 border-t border-[#26332C]">
+          <span>Days 1–30 Phase 1: Foundation</span>
+          <span className="text-[#3ECF8E] font-semibold">{Math.round(((user?.dayNumber || 1) / (user?.totalDaysGoal || 90)) * 100)}% Protocol Completed</span>
         </div>
       </div>
 

@@ -202,8 +202,61 @@ export const api = {
     });
   },
 
-  // Stats
+  // Stats & Day History
   async getStats(): Promise<any> {
     return request<any>('/api/stats');
   },
+
+  async getDaysHistory(): Promise<{
+    currentDay: number;
+    totalDays: number;
+    streakDays: number;
+    days: Array<{
+      dayNumber: number;
+      date: string;
+      status: 'completed' | 'active' | 'partial' | 'missed' | 'upcoming';
+      completedCount: number;
+      totalCount: number;
+      points: number;
+      isCurrent: boolean;
+      isPast: boolean;
+    }>;
+  }> {
+    return request<any>('/api/days-history');
+  },
+
+  // Push Notifications
+  async getVapidPublicKey(): Promise<{ publicKey: string }> {
+    return request<{ publicKey: string }>('/api/notifications/vapid-public-key');
+  },
+
+  async getNotificationStatus(): Promise<{ isSubscribed: boolean; preferredTime: string; timezone: string }> {
+    return request<{ isSubscribed: boolean; preferredTime: string; timezone: string }>('/api/notifications/status');
+  },
+
+  async subscribePush(data: { endpoint: string; keys: { p256dh: string; auth: string }; preferredTime?: string; timezone?: string }): Promise<{ success: boolean }> {
+    return request<{ success: boolean }>('/api/notifications/subscribe', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async sendTestPushNotification(): Promise<any> {
+    return request<any>('/api/notifications/test', {
+      method: 'POST',
+    });
+  },
+
+  async triggerDailyBriefing(): Promise<any> {
+    return request<any>('/api/notifications/trigger-briefing', {
+      method: 'POST',
+    });
+  },
+
+  async unsubscribePush(): Promise<{ success: boolean }> {
+    return request<{ success: boolean }>('/api/notifications/unsubscribe', {
+      method: 'DELETE',
+    });
+  },
 };
+

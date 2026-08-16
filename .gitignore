@@ -6,3 +6,15 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Local SQLite databases
+*.db
+lockin_supabase.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.vapid_keys.json
+
+

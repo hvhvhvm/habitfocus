@@ -17,13 +17,22 @@ import {
   Utensils,
   AlertTriangle,
   Sparkles,
+  Bell,
 } from 'lucide-react';
 
 const AVATAR_OPTIONS = ['⚡', '🚀', '💪', '🧠', '🎯', '🔥', '🏆', '👑', '🦁', '🐺'];
 
 export const ProfileView: React.FC = () => {
   const { user, logout, updateUserInContext } = useAuth();
-  const { setIsAuthModalOpen, reset90DayProtocol, proteinData, updateProteinGoal, simulateNextDay } = useApp();
+  const {
+    setIsAuthModalOpen,
+    reset90DayProtocol,
+    proteinData,
+    updateProteinGoal,
+    simulateNextDay,
+    setIsNotificationModalOpen,
+    setIsDayRoadmapModalOpen,
+  } = useApp();
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(user?.name || 'Lock-In Operator');
@@ -238,10 +247,47 @@ export const ProfileView: React.FC = () => {
             />
           </div>
 
-          <div className="flex items-center justify-between text-xs text-[#8A9891] font-mono-code">
+          <div className="flex items-center justify-between text-xs text-[#8A9891] font-mono-code mb-3">
             <span>Progress: {dayPercentage}% Completed</span>
             <span>{totalDays - dayNum} Days Remaining</span>
           </div>
+
+          <button
+            onClick={() => setIsDayRoadmapModalOpen(true)}
+            className="w-full bg-[#16201B] hover:bg-[#121A15] border border-[#3ECF8E]/30 text-[#3ECF8E] font-mono-code text-xs py-2 px-3 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
+          >
+            Open 90-Day Protocol Calendar & History ➔
+          </button>
+        </div>
+
+        {/* DAILY MOBILE PHONE PUSH NOTIFICATIONS CARD */}
+        <div className="bg-[#1D2922] border border-[#3ECF8E]/30 rounded-2xl p-4 sm:p-5 mb-6 shadow-md">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 bg-[#3ECF8E]/15 text-[#3ECF8E] rounded-xl border border-[#3ECF8E]/30">
+                <Bell className="w-4 h-4" />
+              </div>
+              <div>
+                <h4 className="font-space font-bold text-sm text-[#F4F6F5]">
+                  Daily Mobile Push Notifications
+                </h4>
+                <p className="text-xs text-[#8A9891]">
+                  Receive Day number & daily task list on your phone every morning
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <p className="text-xs text-[#8A9891] mt-2 mb-3 leading-relaxed">
+            Delivers a daily morning briefing notification with your current Day number and all scheduled tasks, even when your browser is not open.
+          </p>
+
+          <button
+            onClick={() => setIsNotificationModalOpen(true)}
+            className="w-full bg-[#3ECF8E] hover:bg-[#32B87C] text-[#0B1510] font-space font-bold text-xs py-2.5 px-4 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md"
+          >
+            <Bell className="w-4 h-4" /> Configure Daily Phone Notifications
+          </button>
         </div>
 
         {/* PROTEIN GOAL CARD */}
