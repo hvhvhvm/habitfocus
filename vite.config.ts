@@ -16,6 +16,7 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       host: true, // Listen on all local IPs (0.0.0.0) so phone can connect over Wi-Fi
+      allowedHosts: true,
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify — file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
@@ -30,6 +31,10 @@ export default defineConfig(({ mode }) => {
           secure: false,
         },
       },
+    },
+    preview: {
+      host: true,
+      allowedHosts: true,
     },
   };
 });
