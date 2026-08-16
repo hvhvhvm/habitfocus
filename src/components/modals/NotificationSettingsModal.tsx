@@ -71,7 +71,12 @@ export const NotificationSettingsModal: React.FC = () => {
     setTestStatusMessage(null);
     setErrorMessage(null);
 
-    const res = await testMobilePushNotification();
+    const res = await testMobilePushNotification({
+      dayNumber: user?.dayNumber || 1,
+      totalDays: user?.totalDaysGoal || 90,
+      streakDays: user?.streakDays || 1,
+      tasks,
+    });
     setIsTesting(false);
 
     if (res.success) {

@@ -75,3 +75,29 @@ self.addEventListener('notificationclick', (event) => {
     })
   );
 });
+
+// Client Message Event: Direct triggers and local notification dispatch
+self.addEventListener('message', (event) => {
+  if (!event.data) return;
+
+  if (event.data.type === 'SHOW_NOTIFICATION') {
+    const { title, body, dayNumber } = event.data;
+    self.registration.showNotification(title || '⚡ Lock-In Protocol Daily Briefing', {
+      body: body || 'Time to lock in and review your tasks!',
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      vibrate: [200, 100, 200, 100, 200],
+      tag: 'daily-protocol-briefing',
+      renotify: true,
+      data: {
+        url: '/',
+        dayNumber: dayNumber || 1,
+      },
+      actions: [
+        { action: 'open_protocol', title: '⚡ Open Protocol' },
+        { action: 'dismiss', title: 'Dismiss' },
+      ],
+    });
+  }
+});
+
