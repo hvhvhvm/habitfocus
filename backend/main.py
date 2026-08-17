@@ -23,6 +23,18 @@ Base.metadata.create_all(bind=engine)
 for migration_sql in [
     "ALTER TABLE users ADD COLUMN last_active_date VARCHAR DEFAULT ''",
     "ALTER TABLE protein_logs ADD COLUMN logged_date VARCHAR DEFAULT ''",
+    "ALTER TABLE push_subscriptions ADD COLUMN morning_time VARCHAR DEFAULT '07:00'",
+    "ALTER TABLE push_subscriptions ADD COLUMN afternoon_time VARCHAR DEFAULT '12:30'",
+    "ALTER TABLE push_subscriptions ADD COLUMN evening_time VARCHAR DEFAULT '17:30'",
+    "ALTER TABLE push_subscriptions ADD COLUMN night_time VARCHAR DEFAULT '21:30'",
+    "ALTER TABLE push_subscriptions ADD COLUMN notify_morning BOOLEAN DEFAULT TRUE",
+    "ALTER TABLE push_subscriptions ADD COLUMN notify_afternoon BOOLEAN DEFAULT TRUE",
+    "ALTER TABLE push_subscriptions ADD COLUMN notify_evening BOOLEAN DEFAULT TRUE",
+    "ALTER TABLE push_subscriptions ADD COLUMN notify_night BOOLEAN DEFAULT TRUE",
+    "ALTER TABLE push_subscriptions ADD COLUMN last_morning_sent VARCHAR DEFAULT ''",
+    "ALTER TABLE push_subscriptions ADD COLUMN last_afternoon_sent VARCHAR DEFAULT ''",
+    "ALTER TABLE push_subscriptions ADD COLUMN last_evening_sent VARCHAR DEFAULT ''",
+    "ALTER TABLE push_subscriptions ADD COLUMN last_night_sent VARCHAR DEFAULT ''",
 ]:
     try:
         with engine.connect() as conn:
@@ -32,62 +44,93 @@ for migration_sql in [
         pass
 
 # ---------------------------------------------------------------------------
-# Background Scheduler: sends push notifications at each time block
+# Background Scheduler: Timezone-aware per-minute dispatcher
 # ---------------------------------------------------------------------------
 
-def dispatch_time_block_briefings(time_block: str):
-    """Called by APScheduler — sends push for all active subscriptions for this time block."""
+def check_and_dispatch_scheduled_notifications():
+    """
+    Runs every minute. Iterates all active push subscriptions,
+    computes each user's local time in their configured timezone,
+    and dispatches morning / afternoon / evening / night task briefings.
+    """
     from backend.notifications import send_time_block_briefing_to_user
+    import zoneinfo
+
     db = SessionLocal()
     try:
-        users = db.query(User).join(
-            PushSubscription,
-            PushSubscription.user_id == User.id
-        ).filter(PushSubscription.is_active == True).distinct().all()
-
-        sent_total = 0
-        for user in users:
+        subs = db.query(PushSubscription).filter(PushSubscription.is_active == True).all()
+        for sub in subs:
             try:
-                result = send_time_block_briefing_to_user(user, db, time_block)
-                sent_total += result.get("sentCount", 0)
-            except Exception as e:
-                logger.warning(f"Failed sending {time_block} push for user {user.id}: {e}")
+                tz_name = sub.timezone or "UTC"
+                try:
+                    user_tz = zoneinfo.ZoneInfo(tz_name)
+                except Exception:
+                    user_tz = zoneinfo.ZoneInfo("UTC")
 
-        logger.info(f"[Scheduler] {time_block.capitalize()} briefing: sent {sent_total} push(es) to {len(users)} user(s).")
+                now_local = datetime.now(user_tz)
+                current_time = now_local.strftime("%H:%M")
+                current_date = now_local.strftime("%Y-%m-%d")
+
+                user = db.query(User).filter(User.id == sub.user_id).first()
+                if not user:
+                    continue
+
+                # ☀️ Morning Briefing
+                morning_target = sub.morning_time or sub.preferred_time or "07:00"
+                if (sub.notify_morning is not False) and (current_time == morning_target) and (sub.last_morning_sent != current_date):
+                    logger.info(f"[Scheduler] ☀️ Dispatching Morning Briefing to user {user.id} ({user.email}) at local time {current_time} ({tz_name})")
+                    send_time_block_briefing_to_user(user, db, "morning")
+                    sub.last_morning_sent = current_date
+                    db.commit()
+
+                # ✨ Afternoon Momentum Briefing
+                afternoon_target = sub.afternoon_time or "12:30"
+                if (sub.notify_afternoon is not False) and (current_time == afternoon_target) and (sub.last_afternoon_sent != current_date):
+                    logger.info(f"[Scheduler] ✨ Dispatching Afternoon Briefing to user {user.id} ({user.email}) at local time {current_time} ({tz_name})")
+                    send_time_block_briefing_to_user(user, db, "afternoon")
+                    sub.last_afternoon_sent = current_date
+                    db.commit()
+
+                # 🌇 Evening Surge Briefing
+                evening_target = sub.evening_time or "17:30"
+                if (sub.notify_evening is not False) and (current_time == evening_target) and (sub.last_evening_sent != current_date):
+                    logger.info(f"[Scheduler] 🌇 Dispatching Evening Briefing to user {user.id} ({user.email}) at local time {current_time} ({tz_name})")
+                    send_time_block_briefing_to_user(user, db, "evening")
+                    sub.last_evening_sent = current_date
+                    db.commit()
+
+                # 🌙 Night Protocol & Recovery
+                night_target = sub.night_time or "21:30"
+                if (sub.notify_night is not False) and (current_time == night_target) and (sub.last_night_sent != current_date):
+                    logger.info(f"[Scheduler] 🌙 Dispatching Night Briefing to user {user.id} ({user.email}) at local time {current_time} ({tz_name})")
+                    send_time_block_briefing_to_user(user, db, "night")
+                    sub.last_night_sent = current_date
+                    db.commit()
+
+            except Exception as sub_err:
+                logger.warning(f"[Scheduler] Error processing subscription {sub.id}: {sub_err}")
     except Exception as e:
-        logger.error(f"[Scheduler] Error in {time_block} dispatch: {e}")
+        logger.error(f"[Scheduler] Error in notification dispatcher loop: {e}")
     finally:
         db.close()
 
 
 scheduler = BackgroundScheduler(timezone="UTC")
 
-# ☀️  Morning:   07:00 IST = 01:30 UTC
-# ✨  Afternoon: 12:30 IST = 07:00 UTC
-# 🌇  Evening:   17:30 IST = 12:00 UTC
-# 🌙  Night:     21:30 IST = 16:00 UTC
-TIME_BLOCK_SCHEDULE = [
-    {"block": "morning",   "hour": 1,  "minute": 30},
-    {"block": "afternoon", "hour": 7,  "minute": 0},
-    {"block": "evening",   "hour": 12, "minute": 0},
-    {"block": "night",     "hour": 16, "minute": 0},
-]
-
-for entry in TIME_BLOCK_SCHEDULE:
-    scheduler.add_job(
-        dispatch_time_block_briefings,
-        CronTrigger(hour=entry["hour"], minute=entry["minute"], timezone="UTC"),
-        args=[entry["block"]],
-        id=f"notify_{entry['block']}",
-        replace_existing=True,
-        misfire_grace_time=900,
-    )
-
+# Run notification check interval every 1 minute
+scheduler.add_job(
+    check_and_dispatch_scheduled_notifications,
+    "interval",
+    minutes=1,
+    id="scheduled_notification_checker",
+    replace_existing=True,
+    misfire_grace_time=60,
+)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler.start()
-    logger.info("[Scheduler] Time-block push notification scheduler started.")
+    logger.info("[Scheduler] Timezone-aware push notification background scheduler started.")
     yield
     scheduler.shutdown(wait=False)
     logger.info("[Scheduler] Scheduler stopped.")
@@ -833,10 +876,33 @@ def get_notification_status(
         PushSubscription.is_active == True
     ).first()
 
+    if not sub:
+        return {
+            "isSubscribed": False,
+            "preferredTime": "07:00",
+            "morningTime": "07:00",
+            "afternoonTime": "12:30",
+            "eveningTime": "17:30",
+            "nightTime": "21:30",
+            "notifyMorning": True,
+            "notifyAfternoon": True,
+            "notifyEvening": True,
+            "notifyNight": True,
+            "timezone": "UTC",
+        }
+
     return {
-        "isSubscribed": sub is not None,
-        "preferredTime": sub.preferred_time if sub else "08:00",
-        "timezone": sub.timezone if sub else "UTC",
+        "isSubscribed": True,
+        "preferredTime": sub.preferred_time or "07:00",
+        "morningTime": sub.morning_time or "07:00",
+        "afternoonTime": sub.afternoon_time or "12:30",
+        "eveningTime": sub.evening_time or "17:30",
+        "nightTime": sub.night_time or "21:30",
+        "notifyMorning": sub.notify_morning if sub.notify_morning is not None else True,
+        "notifyAfternoon": sub.notify_afternoon if sub.notify_afternoon is not None else True,
+        "notifyEvening": sub.notify_evening if sub.notify_evening is not None else True,
+        "notifyNight": sub.notify_night if sub.notify_night is not None else True,
+        "timezone": sub.timezone or "UTC",
     }
 
 @app.post("/api/notifications/subscribe")
@@ -850,10 +916,24 @@ def subscribe_push_notifications(
         PushSubscription.endpoint == req.endpoint
     ).first()
 
+    pref_time = req.morningTime or req.preferredTime or "07:00"
+
     if sub:
         sub.p256dh = req.keys.p256dh
         sub.auth = req.keys.auth
-        sub.preferred_time = req.preferredTime or "08:00"
+        sub.preferred_time = pref_time
+        sub.morning_time = req.morningTime or pref_time
+        sub.afternoon_time = req.afternoonTime or "12:30"
+        sub.evening_time = req.eveningTime or "17:30"
+        sub.night_time = req.nightTime or "21:30"
+        if req.notifyMorning is not None:
+            sub.notify_morning = req.notifyMorning
+        if req.notifyAfternoon is not None:
+            sub.notify_afternoon = req.notifyAfternoon
+        if req.notifyEvening is not None:
+            sub.notify_evening = req.notifyEvening
+        if req.notifyNight is not None:
+            sub.notify_night = req.notifyNight
         sub.timezone = req.timezone or "UTC"
         sub.is_active = True
     else:
@@ -862,7 +942,15 @@ def subscribe_push_notifications(
             endpoint=req.endpoint,
             p256dh=req.keys.p256dh,
             auth=req.keys.auth,
-            preferred_time=req.preferredTime or "08:00",
+            preferred_time=pref_time,
+            morning_time=req.morningTime or pref_time,
+            afternoon_time=req.afternoonTime or "12:30",
+            evening_time=req.eveningTime or "17:30",
+            night_time=req.nightTime or "21:30",
+            notify_morning=req.notifyMorning if req.notifyMorning is not None else True,
+            notify_afternoon=req.notifyAfternoon if req.notifyAfternoon is not None else True,
+            notify_evening=req.notifyEvening if req.notifyEvening is not None else True,
+            notify_night=req.notifyNight if req.notifyNight is not None else True,
             timezone=req.timezone or "UTC",
             is_active=True,
         )
@@ -871,6 +959,42 @@ def subscribe_push_notifications(
     db.commit()
     db.refresh(sub)
     return {"success": True, "subscription": sub.to_dict()}
+
+@app.post("/api/notifications/preferences")
+def update_notification_preferences(
+    req: schemas.NotificationPreferencesUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    subs = db.query(PushSubscription).filter(
+        PushSubscription.user_id == user.id,
+        PushSubscription.is_active == True
+    ).all()
+
+    for sub in subs:
+        if req.preferredTime is not None:
+            sub.preferred_time = req.preferredTime
+        if req.morningTime is not None:
+            sub.morning_time = req.morningTime
+        if req.afternoonTime is not None:
+            sub.afternoon_time = req.afternoonTime
+        if req.eveningTime is not None:
+            sub.evening_time = req.eveningTime
+        if req.nightTime is not None:
+            sub.night_time = req.nightTime
+        if req.notifyMorning is not None:
+            sub.notify_morning = req.notifyMorning
+        if req.notifyAfternoon is not None:
+            sub.notify_afternoon = req.notifyAfternoon
+        if req.notifyEvening is not None:
+            sub.notify_evening = req.notifyEvening
+        if req.notifyNight is not None:
+            sub.notify_night = req.notifyNight
+        if req.timezone is not None:
+            sub.timezone = req.timezone
+
+    db.commit()
+    return {"success": True, "message": "Notification preferences updated successfully."}
 
 @app.post("/api/notifications/test")
 def send_test_push_notification(
@@ -913,3 +1037,4 @@ def unsubscribe_push_notifications(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("backend.main:app", host="127.0.0.1", port=8000, reload=True)
+

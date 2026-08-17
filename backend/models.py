@@ -213,7 +213,19 @@ class PushSubscription(Base):
     endpoint = Column(Text, nullable=False)
     p256dh = Column(Text, nullable=False)
     auth = Column(Text, nullable=False)
-    preferred_time = Column(String, default="08:00") # Format: "08:00"
+    preferred_time = Column(String, default="07:00") # Format: "07:00"
+    morning_time = Column(String, default="07:00")
+    afternoon_time = Column(String, default="12:30")
+    evening_time = Column(String, default="17:30")
+    night_time = Column(String, default="21:30")
+    notify_morning = Column(Boolean, default=True)
+    notify_afternoon = Column(Boolean, default=True)
+    notify_evening = Column(Boolean, default=True)
+    notify_night = Column(Boolean, default=True)
+    last_morning_sent = Column(String, default="")
+    last_afternoon_sent = Column(String, default="")
+    last_evening_sent = Column(String, default="")
+    last_night_sent = Column(String, default="")
     timezone = Column(String, default="UTC")
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -225,8 +237,17 @@ class PushSubscription(Base):
             "id": self.id,
             "userId": self.user_id,
             "endpoint": self.endpoint,
-            "preferredTime": self.preferred_time,
-            "timezone": self.timezone,
+            "preferredTime": self.preferred_time or "07:00",
+            "morningTime": self.morning_time or "07:00",
+            "afternoonTime": self.afternoon_time or "12:30",
+            "eveningTime": self.evening_time or "17:30",
+            "nightTime": self.night_time or "21:30",
+            "notifyMorning": self.notify_morning if self.notify_morning is not None else True,
+            "notifyAfternoon": self.notify_afternoon if self.notify_afternoon is not None else True,
+            "notifyEvening": self.notify_evening if self.notify_evening is not None else True,
+            "notifyNight": self.notify_night if self.notify_night is not None else True,
+            "timezone": self.timezone or "UTC",
             "isActive": self.is_active,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
         }
+

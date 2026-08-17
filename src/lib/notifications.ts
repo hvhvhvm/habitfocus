@@ -1,6 +1,30 @@
 import { api } from './api';
 
-const DEFAULT_VAPID_PUBLIC_KEY = 'BMZiB3VFUwDpd0RUTX24kTrzKVQlrK2Ob1aOW3GS5kFzH2bGFUJA2_Gznq53tab7IAzHAAxZ-wkYWmC5t1YsZjY';
+export const DEFAULT_VAPID_PUBLIC_KEY = 'BMZiB3VFUwDpd0RUTX24kTrzKVQlrK2Ob1aOW3GS5kFzH2bGFUJA2_Gznq53tab7IAzHAAxZ-wkYWmC5t1YsZjY';
+
+export interface NotificationScheduleConfig {
+  preferredTime: string;
+  morningTime: string;
+  afternoonTime: string;
+  eveningTime: string;
+  nightTime: string;
+  notifyMorning: boolean;
+  notifyAfternoon: boolean;
+  notifyEvening: boolean;
+  notifyNight: boolean;
+}
+
+export const DEFAULT_SCHEDULE_CONFIG: NotificationScheduleConfig = {
+  preferredTime: '07:00',
+  morningTime: '07:00',
+  afternoonTime: '12:30',
+  eveningTime: '17:30',
+  nightTime: '21:30',
+  notifyMorning: true,
+  notifyAfternoon: true,
+  notifyEvening: true,
+  notifyNight: true,
+};
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -41,6 +65,25 @@ export async function getServiceWorkerRegistration(): Promise<ServiceWorkerRegis
   }
 }
 
+export function getLocalScheduleConfig(): NotificationScheduleConfig {
+  try {
+    const saved = localStorage.getItem('lockin_schedule_config');
+    if (saved) {
+      return { ...DEFAULT_SCHEDULE_CONFIG, ...JSON.parse(saved) };
+    }
+  } catch (e) {}
+  return DEFAULT_SCHEDULE_CONFIG;
+}
+
+export function saveLocalScheduleConfig(config: Partial<NotificationScheduleConfig>): NotificationScheduleConfig {
+  const current = getLocalScheduleConfig();
+  const updated = { ...current, ...config };
+  try {
+    localStorage.setItem('lockin_schedule_config', JSON.stringify(updated));
+  } catch (e) {}
+  return updated;
+}
+
 export async function ensurePushSubscriptionActive(): Promise<boolean> {
   try {
     if (!('Notification' in window) || Notification.permission !== 'granted') {
@@ -68,6 +111,7 @@ export async function ensurePushSubscriptionActive(): Promise<boolean> {
 
     const subJson = subscription.toJSON();
     const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    const schedule = getLocalScheduleConfig();
 
     if (subJson?.endpoint && subJson?.keys?.p256dh && subJson?.keys?.auth) {
       await api.subscribePush({
@@ -76,7 +120,15 @@ export async function ensurePushSubscriptionActive(): Promise<boolean> {
           p256dh: subJson.keys.p256dh,
           auth: subJson.keys.auth,
         },
-        preferredTime: '07:00',
+        preferredTime: schedule.preferredTime || schedule.morningTime || '07:00',
+        morningTime: schedule.morningTime || '07:00',
+        afternoonTime: schedule.afternoonTime || '12:30',
+        eveningTime: schedule.eveningTime || '17:30',
+        nightTime: schedule.nightTime || '21:30',
+        notifyMorning: schedule.notifyMorning,
+        notifyAfternoon: schedule.notifyAfternoon,
+        notifyEvening: schedule.notifyEvening,
+        notifyNight: schedule.notifyNight,
         timezone: userTimezone,
       });
 
@@ -95,34 +147,32 @@ export async function ensurePushSubscriptionActive(): Promise<boolean> {
   }
 }
 
-export async function requestPushNotificationSubscription(preferredTime: string = '07:00'): Promise<{ success: boolean; error?: string }> {
+export async function requestPushNotificationSubscription(customSchedule?: Partial<NotificationScheduleConfig>): Promise<{ success: boolean; error?: string }> {
   try {
     if (!('Notification' in window)) {
-      return { success: false, error: 'Notifications are not supported on this browser.' };
+      return { success: false, error: 'Notifications are not supported on this browser. On iPhone, make sure you tap "Add to Home Screen" first.' };
     }
 
-    // 1. Request permission from user (Shows native iOS/Android prompt)
+    // 1. Request permission from user (Native iOS / Android / Desktop prompt)
     const permission = await Notification.requestPermission();
     if (permission !== 'granted') {
       return {
         success: false,
-        error: 'Notification permission was denied. Please allow notifications in your iPhone Settings > Safari > Notifications.',
+        error: 'Notification permission was denied. Please allow notifications in iPhone Settings > Safari > Notifications.',
       };
     }
 
     // 2. Ready Service Worker
     const registration = await getServiceWorkerRegistration();
 
-    // 3. Obtain VAPID Public Key (with resilient fallback)
+    // 3. Obtain VAPID Public Key
     let publicKey = DEFAULT_VAPID_PUBLIC_KEY;
     try {
       const vapidRes = await api.getVapidPublicKey().catch(() => null);
       if (vapidRes?.publicKey) {
         publicKey = vapidRes.publicKey;
       }
-    } catch (e) {
-      // Use fallback key
-    }
+    } catch (e) {}
 
     let subJson: any = null;
 
@@ -130,6 +180,16 @@ export async function requestPushNotificationSubscription(preferredTime: string 
     if (registration && 'pushManager' in registration) {
       const convertedVapidKey = urlBase64ToUint8Array(publicKey);
       let subscription = await registration.pushManager.getSubscription().catch(() => null);
+
+      if (subscription) {
+        // Test existing subscription, if key changed unsubscribe and recreate
+        try {
+          subJson = subscription.toJSON();
+        } catch (e) {
+          await subscription.unsubscribe().catch(() => {});
+          subscription = null;
+        }
+      }
 
       if (!subscription) {
         subscription = await registration.pushManager.subscribe({
@@ -141,19 +201,24 @@ export async function requestPushNotificationSubscription(preferredTime: string 
     }
 
     const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    const schedule = saveLocalScheduleConfig(customSchedule || {});
 
-    // 5. Store subscription preferences locally in localStorage
+    // 5. Store subscription record in localStorage
     const localSubRecord = {
       endpoint: subJson?.endpoint || 'local_device',
       keys: subJson?.keys || { p256dh: '', auth: '' },
-      preferredTime,
+      preferredTime: schedule.morningTime || '07:00',
+      morningTime: schedule.morningTime || '07:00',
+      afternoonTime: schedule.afternoonTime || '12:30',
+      eveningTime: schedule.eveningTime || '17:30',
+      nightTime: schedule.nightTime || '21:30',
       timezone: userTimezone,
       isActive: true,
       updatedAt: new Date().toISOString(),
     };
     localStorage.setItem('lockin_push_sub', JSON.stringify(localSubRecord));
 
-    // 6. Sync to FastAPI backend and await confirmation
+    // 6. Sync to FastAPI backend
     if (subJson?.endpoint && subJson?.keys?.p256dh && subJson?.keys?.auth) {
       try {
         await api.subscribePush({
@@ -162,7 +227,15 @@ export async function requestPushNotificationSubscription(preferredTime: string 
             p256dh: subJson.keys.p256dh,
             auth: subJson.keys.auth,
           },
-          preferredTime,
+          preferredTime: schedule.preferredTime || schedule.morningTime || '07:00',
+          morningTime: schedule.morningTime || '07:00',
+          afternoonTime: schedule.afternoonTime || '12:30',
+          eveningTime: schedule.eveningTime || '17:30',
+          nightTime: schedule.nightTime || '21:30',
+          notifyMorning: schedule.notifyMorning,
+          notifyAfternoon: schedule.notifyAfternoon,
+          notifyEvening: schedule.notifyEvening,
+          notifyNight: schedule.notifyNight,
           timezone: userTimezone,
         });
       } catch (err) {
@@ -175,6 +248,53 @@ export async function requestPushNotificationSubscription(preferredTime: string 
     console.error('Failed to subscribe to push notifications:', err);
     return { success: false, error: err?.message || 'Failed to enable notifications on this device.' };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Client-Side In-App Notification Scheduler (Dual Reliability Ticker)
+// ---------------------------------------------------------------------------
+let localSchedulerInterval: any = null;
+
+export function initLocalNotificationScheduler(): void {
+  if (localSchedulerInterval) return;
+
+  const checkScheduledBlocks = () => {
+    try {
+      if (getNotificationPermissionState() !== 'granted') return;
+
+      const now = new Date();
+      const hours = String(now.getHours()).padStart(2, '0');
+      const mins = String(now.getMinutes()).padStart(2, '0');
+      const currentTimeStr = `${hours}:${mins}`;
+      const todayDateStr = now.toISOString().split('T')[0];
+
+      const schedule = getLocalScheduleConfig();
+
+      const blocksToCheck = [
+        { block: 'morning', time: schedule.morningTime || schedule.preferredTime || '07:00', enabled: schedule.notifyMorning !== false },
+        { block: 'afternoon', time: schedule.afternoonTime || '12:30', enabled: schedule.notifyAfternoon !== false },
+        { block: 'evening', time: schedule.eveningTime || '17:30', enabled: schedule.notifyEvening !== false },
+        { block: 'night', time: schedule.nightTime || '21:30', enabled: schedule.notifyNight !== false },
+      ];
+
+      for (const item of blocksToCheck) {
+        if (item.enabled && item.time === currentTimeStr) {
+          const sentKey = `lockin_local_sent_${item.block}_${todayDateStr}`;
+          if (!localStorage.getItem(sentKey)) {
+            localStorage.setItem(sentKey, 'true');
+            console.log(`⚡ [LocalScheduler] Dispatching ${item.block} notification at ${currentTimeStr}`);
+            testTimeBlockNotification(item.block);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Local notification check error:', e);
+    }
+  };
+
+  // Run every 20 seconds
+  localSchedulerInterval = setInterval(checkScheduledBlocks, 20000);
+  checkScheduledBlocks();
 }
 
 export async function testMobilePushNotification(customPayload?: {

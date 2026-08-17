@@ -8,6 +8,9 @@ import {
   testMobilePushNotification,
   testTimeBlockNotification,
   getNotificationPermissionState,
+  getLocalScheduleConfig,
+  saveLocalScheduleConfig,
+  NotificationScheduleConfig,
 } from '../../lib/notifications';
 import {
   Bell,
@@ -22,6 +25,8 @@ import {
   PlusSquare,
   ShieldCheck,
   Zap,
+  Save,
+  Globe,
 } from 'lucide-react';
 
 export const NotificationSettingsModal: React.FC = () => {
@@ -30,17 +35,23 @@ export const NotificationSettingsModal: React.FC = () => {
 
   const [permissionState, setPermissionState] = useState<NotificationPermission>('default');
   const [isSubscribed, setIsSubscribed] = useState<boolean>(false);
-  const [preferredTime, setPreferredTime] = useState<string>('random_morning');
+  const [scheduleConfig, setScheduleConfig] = useState<NotificationScheduleConfig>(getLocalScheduleConfig());
   const [isEnabling, setIsEnabling] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
   const [isTesting, setIsTesting] = useState<boolean>(false);
   const [testingBlock, setTestingBlock] = useState<string | null>(null);
   const [testStatusMessage, setTestStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const detectedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
   useEffect(() => {
     if (!isNotificationModalOpen) return;
     const perm = getNotificationPermissionState();
     setPermissionState(perm);
+
+    const localConfig = getLocalScheduleConfig();
+    setScheduleConfig(localConfig);
 
     let localActive = false;
     try {
@@ -65,7 +76,20 @@ export const NotificationSettingsModal: React.FC = () => {
             if (synced) setIsSubscribed(true);
           });
         }
-        if (res.preferredTime) setPreferredTime(res.preferredTime);
+        if (res.morningTime || res.preferredTime) {
+          const updated = saveLocalScheduleConfig({
+            preferredTime: res.morningTime || res.preferredTime || localConfig.morningTime,
+            morningTime: res.morningTime || localConfig.morningTime,
+            afternoonTime: res.afternoonTime || localConfig.afternoonTime,
+            eveningTime: res.eveningTime || localConfig.eveningTime,
+            nightTime: res.nightTime || localConfig.nightTime,
+            notifyMorning: res.notifyMorning !== undefined ? res.notifyMorning : localConfig.notifyMorning,
+            notifyAfternoon: res.notifyAfternoon !== undefined ? res.notifyAfternoon : localConfig.notifyAfternoon,
+            notifyEvening: res.notifyEvening !== undefined ? res.notifyEvening : localConfig.notifyEvening,
+            notifyNight: res.notifyNight !== undefined ? res.notifyNight : localConfig.notifyNight,
+          });
+          setScheduleConfig(updated);
+        }
       })
       .catch(() => {
         if (perm === 'granted' || localActive) {
@@ -81,16 +105,44 @@ export const NotificationSettingsModal: React.FC = () => {
     setErrorMessage(null);
     setTestStatusMessage(null);
 
-    const result = await requestPushNotificationSubscription(preferredTime);
+    const result = await requestPushNotificationSubscription(scheduleConfig);
     setIsEnabling(false);
 
     if (result.success) {
       setIsSubscribed(true);
       setPermissionState(getNotificationPermissionState());
-      setTestStatusMessage('✅ Daily mobile notifications enabled successfully! Sending test briefing...');
+      setTestStatusMessage('✅ Scheduled notifications activated successfully! Sending immediate test briefing...');
       await handleSendTestPush();
     } else {
       setErrorMessage(result.error || 'Could not enable push notifications. Check browser permissions.');
+    }
+  };
+
+  const handleSaveSchedule = async () => {
+    setIsSaving(true);
+    setErrorMessage(null);
+    setTestStatusMessage(null);
+
+    saveLocalScheduleConfig(scheduleConfig);
+
+    try {
+      await api.updateNotificationPreferences({
+        preferredTime: scheduleConfig.morningTime,
+        morningTime: scheduleConfig.morningTime,
+        afternoonTime: scheduleConfig.afternoonTime,
+        eveningTime: scheduleConfig.eveningTime,
+        nightTime: scheduleConfig.nightTime,
+        notifyMorning: scheduleConfig.notifyMorning,
+        notifyAfternoon: scheduleConfig.notifyAfternoon,
+        notifyEvening: scheduleConfig.notifyEvening,
+        notifyNight: scheduleConfig.notifyNight,
+        timezone: detectedTimezone,
+      });
+      setTestStatusMessage(`✅ Notification schedule saved! Alerts set to your local timezone (${detectedTimezone}).`);
+    } catch (e: any) {
+      setTestStatusMessage('Schedule saved locally on device.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -108,7 +160,7 @@ export const NotificationSettingsModal: React.FC = () => {
     setIsTesting(false);
 
     if (res.success) {
-      setTestStatusMessage(res.message || '⚡ Notification delivered to your phone!');
+      setTestStatusMessage(res.message || '⚡ Notification delivered to your device!');
     } else {
       setErrorMessage(res.message || 'Failed delivering test notification.');
     }
@@ -126,7 +178,7 @@ export const NotificationSettingsModal: React.FC = () => {
     });
     setTestingBlock(null);
     if (res.success) {
-      setTestStatusMessage(res.message || '⚡ Block notification sent!');
+      setTestStatusMessage(res.message || '⚡ Block notification delivered!');
     } else {
       setErrorMessage(res.message || 'Failed sending block notification.');
     }
@@ -136,7 +188,8 @@ export const NotificationSettingsModal: React.FC = () => {
     try {
       await api.unsubscribePush();
       setIsSubscribed(false);
-      setTestStatusMessage('Unsubscribed from daily push notifications.');
+      localStorage.removeItem('lockin_push_sub');
+      setTestStatusMessage('Unsubscribed from scheduled push notifications.');
     } catch (e) {
       console.error(e);
     }
@@ -159,10 +212,10 @@ export const NotificationSettingsModal: React.FC = () => {
             </div>
             <div>
               <h2 className="font-space font-bold text-lg text-[#F4F6F5]">
-                Daily Mobile Push Notifications
+                Scheduled Tasks & Protocol Alerts
               </h2>
               <p className="font-mono-code text-[11px] text-[#8A9891]">
-                Day number & tasks briefings even when browser is closed
+                Time-block briefings delivered at your exact scheduled hours
               </p>
             </div>
           </div>
@@ -192,12 +245,11 @@ export const NotificationSettingsModal: React.FC = () => {
               />
               <div>
                 <div className="font-space font-bold text-sm text-[#F4F6F5]">
-                  {isSubscribed ? 'Daily Phone Notifications Active' : 'Daily Notifications Inactive'}
+                  {isSubscribed ? 'Scheduled Notifications Active' : 'Scheduled Notifications Inactive'}
                 </div>
-                <div className="text-[11px] font-mono-code text-[#8A9891]">
-                  {isSubscribed
-                    ? `Scheduled every morning at ${preferredTime} in your local timezone`
-                    : 'Enable below to receive your daily morning protocol'}
+                <div className="text-[11px] font-mono-code text-[#8A9891] flex items-center gap-1.5 mt-0.5">
+                  <Globe className="w-3 h-3 text-[#3ECF8E]" />
+                  <span>Timezone: {detectedTimezone}</span>
                 </div>
               </div>
             </div>
@@ -212,114 +264,156 @@ export const NotificationSettingsModal: React.FC = () => {
             )}
           </div>
 
-          {/* iOS / PWA Installation Hint */}
+          {/* iOS / iPhone Installation Setup Guide */}
           {isIOS && !isStandalone && (
-            <div className="p-3.5 bg-[#16201B] border border-[#F5A623]/30 rounded-2xl text-xs space-y-2">
-              <div className="flex items-center gap-2 text-[#F5A623] font-semibold font-space">
-                <Smartphone className="w-4 h-4" /> iPhone Setup Required for Closed Browser Alerts
+            <div className="p-4 bg-[#16201B] border border-[#F5A623]/40 rounded-2xl text-xs space-y-2.5 shadow-lg">
+              <div className="flex items-center gap-2 text-[#F5A623] font-bold font-space">
+                <Smartphone className="w-4 h-4" /> Required iPhone Step: Add to Home Screen
               </div>
               <p className="text-[11px] text-[#8A9891] leading-relaxed">
-                Apple requires installing this app to your Home Screen to deliver push notifications when Safari is closed:
+                iOS requires web apps to be added to your Home Screen so Apple can deliver notifications even when Safari is closed:
               </p>
-              <div className="flex items-center gap-2 text-[11px] font-mono-code bg-[#0F1512] p-2 rounded-xl border border-[#26332C]">
-                <span>1. Tap Safari Share <Share2 className="w-3.5 h-3.5 inline text-[#3ECF8E]" /></span>
-                <span>➔</span>
-                <span>2. Tap <PlusSquare className="w-3.5 h-3.5 inline text-[#3ECF8E]" /> "Add to Home Screen"</span>
+              <div className="space-y-1.5 bg-[#0F1512] p-3 rounded-xl border border-[#26332C] text-[11px] font-mono-code text-[#F4F6F5]">
+                <div className="flex items-center gap-2">
+                  <span className="w-4 h-4 rounded-full bg-[#3ECF8E]/20 text-[#3ECF8E] flex items-center justify-center text-[10px]">1</span>
+                  <span>Tap the Safari <strong>Share</strong> button <Share2 className="w-3.5 h-3.5 inline text-[#3ECF8E]" /> at the bottom</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-4 h-4 rounded-full bg-[#3ECF8E]/20 text-[#3ECF8E] flex items-center justify-center text-[10px]">2</span>
+                  <span>Scroll and tap <strong>Add to Home Screen</strong> <PlusSquare className="w-3.5 h-3.5 inline text-[#3ECF8E]" /></span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-4 h-4 rounded-full bg-[#3ECF8E]/20 text-[#3ECF8E] flex items-center justify-center text-[10px]">3</span>
+                  <span>Open <strong>Lock-In</strong> from your Home Screen & tap <strong>Enable</strong></span>
+                </div>
               </div>
             </div>
           )}
 
-          {/* Morning Overview + Per-Time-Block Notification Schedule */}
-          <div className="space-y-2.5">
-            <div className="font-mono-code text-[11px] uppercase tracking-widest text-[#8A9891] flex items-center gap-2">
-              <Clock className="w-3.5 h-3.5" /> Daily Notification Schedule — All 4 Time Blocks
+          {/* Customizable Time Blocks Schedule */}
+          <div className="space-y-3">
+            <div className="font-mono-code text-[11px] uppercase tracking-widest text-[#8A9891] flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-[#3ECF8E]" /> Scheduled Time Settings
+              </span>
+              <span className="text-[10px] text-[#5E6D66]">Customizable</span>
             </div>
 
             {[
               {
                 block: 'morning',
+                keyTime: 'morningTime' as const,
+                keyNotify: 'notifyMorning' as const,
                 icon: '☀️',
                 label: 'Morning Lock-In',
-                time: '06:30 – 08:00 AM',
                 defaultTime: '07:00',
-                desc: 'Start of day: how many tasks you have for the morning',
-                quote: 'Win the morning, win the day.',
+                desc: 'Morning protocol & scheduled habits briefing',
                 color: '#F5A623',
                 taskCount: tasks.filter((t) => !t.completed && (t.timeBlock || 'morning').toLowerCase() === 'morning').length,
               },
               {
                 block: 'afternoon',
+                keyTime: 'afternoonTime' as const,
+                keyNotify: 'notifyAfternoon' as const,
                 icon: '✨',
                 label: 'Afternoon Momentum',
-                time: '12:00 – 01:00 PM',
                 defaultTime: '12:30',
-                desc: 'Midday check-in: keep your momentum going',
-                quote: 'Consistency over intensity.',
+                desc: 'Midday check-in, protein tracking & progress review',
                 color: '#3ECF8E',
                 taskCount: tasks.filter((t) => !t.completed && (t.timeBlock || '').toLowerCase() === 'afternoon').length,
               },
               {
                 block: 'evening',
+                keyTime: 'eveningTime' as const,
+                keyNotify: 'notifyEvening' as const,
                 icon: '🌇',
                 label: 'Evening Surge',
-                time: '05:00 – 06:30 PM',
                 defaultTime: '17:30',
-                desc: 'End of work: finish strong and close open loops',
-                quote: 'How you finish today determines tomorrow.',
+                desc: 'End of work: close open loops and finish tasks',
                 color: '#6BA6FF',
                 taskCount: tasks.filter((t) => !t.completed && (t.timeBlock || '').toLowerCase() === 'evening').length,
               },
               {
                 block: 'night',
+                keyTime: 'nightTime' as const,
+                keyNotify: 'notifyNight' as const,
                 icon: '🌙',
                 label: 'Night Protocol',
-                time: '09:00 – 10:00 PM',
                 defaultTime: '21:30',
-                desc: 'Wind-down: wrap up and prepare for tomorrow',
-                quote: 'Rest is fuel for tomorrow\'s battle.',
+                desc: 'Recovery, night routine and sleep prep protocol',
                 color: '#A06EFF',
                 taskCount: tasks.filter((t) => !t.completed && (t.timeBlock || '').toLowerCase() === 'night').length,
               },
-            ].map(({ block, icon, label, time, desc, quote, color, taskCount }) => (
+            ].map(({ block, keyTime, keyNotify, icon, label, desc, color, taskCount }) => (
               <div
                 key={block}
-                className="bg-[#0F1512] border border-[#26332C] rounded-2xl p-3.5 flex items-center gap-3"
+                className="bg-[#0F1512] border border-[#26332C] rounded-2xl p-3.5 space-y-2.5 transition-all hover:border-[#3ECF8E]/30"
               >
-                <div
-                  className="w-9 h-9 rounded-xl flex items-center justify-center text-base shrink-0 border"
-                  style={{ background: `${color}18`, borderColor: `${color}40` }}
-                >
-                  {icon}
-                </div>
-
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-space font-semibold text-xs text-[#F4F6F5]">{label}</span>
-                    <span className="font-mono-code text-[10px] text-[#5E6D66]">{time}</span>
-                    <span
-                      className="font-mono-code text-[10px] px-1.5 py-0.5 rounded-full"
-                      style={{ background: `${color}20`, color }}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <div
+                      className="w-8 h-8 rounded-xl flex items-center justify-center text-sm border"
+                      style={{ background: `${color}18`, borderColor: `${color}40` }}
                     >
-                      {taskCount} task{taskCount !== 1 ? 's' : ''}
-                    </span>
+                      {icon}
+                    </div>
+                    <div>
+                      <div className="font-space font-bold text-xs text-[#F4F6F5] flex items-center gap-2">
+                        <span>{label}</span>
+                        <span
+                          className="font-mono-code text-[9px] px-1.5 py-0.5 rounded-full"
+                          style={{ background: `${color}20`, color }}
+                        >
+                          {taskCount} task{taskCount !== 1 ? 's' : ''}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-[#8A9891] font-mono-code mt-0.5">{desc}</p>
+                    </div>
                   </div>
-                  <p className="text-[10px] text-[#5E6D66] font-mono-code mt-0.5">{desc}</p>
-                  <p className="text-[10px] text-[#8A9891] font-mono-code mt-0.5 italic">💡 "{quote}"</p>
+
+                  {/* Toggle on/off */}
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={scheduleConfig[keyNotify] !== false}
+                      onChange={(e) => {
+                        const updated = { ...scheduleConfig, [keyNotify]: e.target.checked };
+                        setScheduleConfig(updated);
+                        saveLocalScheduleConfig(updated);
+                      }}
+                      className="sr-only peer"
+                    />
+                    <div className="w-8 h-4 bg-[#26332C] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3.5 after:transition-all peer-checked:bg-[#3ECF8E]" />
+                  </label>
                 </div>
 
-                <button
-                  onClick={() => handleTestBlock(block)}
-                  disabled={testingBlock !== null || !isSubscribed}
-                  title={!isSubscribed ? 'Enable notifications first' : `Send ${label} test alert`}
-                  className={`shrink-0 flex items-center gap-1.5 text-[10px] font-space font-bold px-2.5 py-1.5 rounded-xl border transition-all cursor-pointer disabled:opacity-40 ${
-                    testingBlock === block
-                      ? 'bg-[#26332C] text-[#3ECF8E] border-[#3ECF8E]/30'
-                      : 'bg-[#16201B] text-[#3ECF8E] border-[#26332C] hover:border-[#3ECF8E]/50 hover:bg-[#3ECF8E]/10'
-                  }`}
-                >
-                  <Send className="w-3 h-3" />
-                  {testingBlock === block ? '...' : 'Test'}
-                </button>
+                {/* Scheduled Time Picker & Test Action */}
+                <div className="flex items-center justify-between pt-2 border-t border-[#1F2B24] gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono-code text-[10px] text-[#8A9891]">Alert Time:</span>
+                    <input
+                      type="time"
+                      value={scheduleConfig[keyTime] || '07:00'}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const updated = { ...scheduleConfig, [keyTime]: val };
+                        setScheduleConfig(updated);
+                        saveLocalScheduleConfig(updated);
+                      }}
+                      className="bg-[#16201B] border border-[#26332C] rounded-lg px-2 py-1 text-xs font-mono-code text-[#3ECF8E] focus:outline-none focus:border-[#3ECF8E]"
+                    />
+                  </div>
+
+                  <button
+                    onClick={() => handleTestBlock(block)}
+                    disabled={testingBlock !== null}
+                    title={`Send test ${label} alert`}
+                    className="flex items-center gap-1.5 text-[10px] font-space font-bold px-2.5 py-1 rounded-xl border border-[#26332C] bg-[#16201B] text-[#3ECF8E] hover:border-[#3ECF8E]/50 hover:bg-[#3ECF8E]/10 transition-all cursor-pointer disabled:opacity-40"
+                  >
+                    <Send className="w-3 h-3" />
+                    {testingBlock === block ? '...' : 'Test Alert'}
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -349,22 +443,33 @@ export const NotificationSettingsModal: React.FC = () => {
               className="flex-1 bg-[#3ECF8E] hover:bg-[#32B87C] text-[#0B1510] font-space font-bold text-sm py-3 px-4 rounded-2xl transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg disabled:opacity-50"
             >
               <Bell className="w-4 h-4" />
-              {isEnabling ? 'Enabling Daily Alerts...' : 'Enable Daily Mobile Notifications'}
+              {isEnabling ? 'Activating Alerts...' : 'Enable Scheduled Notifications'}
             </button>
           ) : (
-            <button
-              onClick={handleSendTestPush}
-              disabled={isTesting}
-              className="flex-1 bg-[#3ECF8E] hover:bg-[#32B87C] text-[#0B1510] font-space font-bold text-sm py-3 px-4 rounded-2xl transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg disabled:opacity-50"
-            >
-              <Send className="w-4 h-4" />
-              {isTesting ? 'Sending Notification to Phone...' : '📲 Send Test Notification to Phone'}
-            </button>
+            <>
+              <button
+                onClick={handleSaveSchedule}
+                disabled={isSaving}
+                className="flex-1 bg-[#3ECF8E] hover:bg-[#32B87C] text-[#0B1510] font-space font-bold text-xs py-3 px-4 rounded-2xl transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg disabled:opacity-50"
+              >
+                <Save className="w-3.5 h-3.5" />
+                {isSaving ? 'Saving...' : 'Save & Sync Schedule'}
+              </button>
+
+              <button
+                onClick={handleSendTestPush}
+                disabled={isTesting}
+                className="bg-[#16201B] hover:bg-[#1D2922] border border-[#26332C] text-[#3ECF8E] font-space font-bold text-xs py-3 px-3 rounded-2xl transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Send className="w-3.5 h-3.5" />
+                {isTesting ? 'Sending...' : 'Test Full Briefing'}
+              </button>
+            </>
           )}
 
           <button
             onClick={() => setIsNotificationModalOpen(false)}
-            className="bg-[#16201B] hover:bg-[#1D2922] border border-[#26332C] text-[#F4F6F5] font-space text-xs py-3 px-4 rounded-2xl transition-colors cursor-pointer text-center"
+            className="bg-[#16201B] hover:bg-[#1D2922] border border-[#26332C] text-[#8A9891] hover:text-[#F4F6F5] font-space text-xs py-3 px-4 rounded-2xl transition-colors cursor-pointer text-center"
           >
             Close
           </button>
@@ -373,3 +478,4 @@ export const NotificationSettingsModal: React.FC = () => {
     </div>
   );
 };
+

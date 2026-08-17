@@ -230,12 +230,55 @@ export const api = {
     return request<{ publicKey: string }>('/api/notifications/vapid-public-key');
   },
 
-  async getNotificationStatus(): Promise<{ isSubscribed: boolean; preferredTime: string; timezone: string }> {
-    return request<{ isSubscribed: boolean; preferredTime: string; timezone: string }>('/api/notifications/status');
+  async getNotificationStatus(): Promise<{
+    isSubscribed: boolean;
+    preferredTime: string;
+    morningTime?: string;
+    afternoonTime?: string;
+    eveningTime?: string;
+    nightTime?: string;
+    notifyMorning?: boolean;
+    notifyAfternoon?: boolean;
+    notifyEvening?: boolean;
+    notifyNight?: boolean;
+    timezone: string;
+  }> {
+    return request<any>('/api/notifications/status');
   },
 
-  async subscribePush(data: { endpoint: string; keys: { p256dh: string; auth: string }; preferredTime?: string; timezone?: string }): Promise<{ success: boolean }> {
+  async subscribePush(data: {
+    endpoint: string;
+    keys: { p256dh: string; auth: string };
+    preferredTime?: string;
+    morningTime?: string;
+    afternoonTime?: string;
+    eveningTime?: string;
+    nightTime?: string;
+    notifyMorning?: boolean;
+    notifyAfternoon?: boolean;
+    notifyEvening?: boolean;
+    notifyNight?: boolean;
+    timezone?: string;
+  }): Promise<{ success: boolean }> {
     return request<{ success: boolean }>('/api/notifications/subscribe', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async updateNotificationPreferences(data: {
+    preferredTime?: string;
+    morningTime?: string;
+    afternoonTime?: string;
+    eveningTime?: string;
+    nightTime?: string;
+    notifyMorning?: boolean;
+    notifyAfternoon?: boolean;
+    notifyEvening?: boolean;
+    notifyNight?: boolean;
+    timezone?: string;
+  }): Promise<{ success: boolean; message: string }> {
+    return request<{ success: boolean; message: string }>('/api/notifications/preferences', {
       method: 'POST',
       body: JSON.stringify(data),
     });

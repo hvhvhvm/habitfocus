@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppProvider, useApp } from './context/AppContext';
-import { ensurePushSubscriptionActive } from './lib/notifications';
+import { ensurePushSubscriptionActive, initLocalNotificationScheduler } from './lib/notifications';
 import { TopHeader } from './components/TopHeader';
 import { MomentumRing } from './components/MomentumRing';
 import { HeroFocusCard } from './components/HeroFocusCard';
@@ -70,6 +70,7 @@ const MainContent: React.FC = () => {
   const { activeTab, viewMode, currentBlock } = useApp();
 
   useEffect(() => {
+    initLocalNotificationScheduler();
     if (isAuthenticated) {
       ensurePushSubscriptionActive().catch(() => {});
     }

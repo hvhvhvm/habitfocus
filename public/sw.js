@@ -1,5 +1,5 @@
 // Service Worker for Lock-In Protocol (Web Push & Background Notifications)
-const CACHE_NAME = 'lockin-protocol-v1';
+const CACHE_NAME = 'lockin-protocol-v2';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -12,17 +12,19 @@ self.addEventListener('activate', (event) => {
 // Push Event: Received push from backend even when browser/tab is closed
 self.addEventListener('push', (event) => {
   let data = {
-    title: '⚡ Lock-In Protocol: Daily Tasks Briefing',
-    body: 'Time to lock in! Open your protocol to review today’s scheduled habits & tasks.',
+    title: '⚡ Lock-In Protocol: Tasks & Daily Protocol',
+    body: 'Time to lock in! Review your scheduled protocol tasks.',
     dayNumber: 1,
     icon: '/icon-192.png',
     badge: '/icon-192.png',
     url: '/',
+    tag: 'lockin-scheduled-briefing',
   };
 
   if (event.data) {
     try {
-      data = Object.assign(data, event.data.json());
+      const parsed = event.data.json();
+      data = Object.assign(data, parsed);
     } catch (e) {
       data.body = event.data.text();
     }
@@ -33,17 +35,12 @@ self.addEventListener('push', (event) => {
     icon: data.icon || '/icon-192.png',
     badge: data.badge || '/icon-192.png',
     vibrate: [200, 100, 200, 100, 200],
-    tag: 'daily-protocol-briefing',
+    tag: data.tag || `lockin-block-${Date.now()}`,
     renotify: true,
-    requireInteraction: false,
     data: {
       url: data.url || '/',
       dayNumber: data.dayNumber || 1,
     },
-    actions: [
-      { action: 'open_protocol', title: '⚡ Open Protocol' },
-      { action: 'dismiss', title: 'Dismiss' },
-    ],
   };
 
   event.waitUntil(
@@ -81,23 +78,20 @@ self.addEventListener('message', (event) => {
   if (!event.data) return;
 
   if (event.data.type === 'SHOW_NOTIFICATION') {
-    const { title, body, dayNumber } = event.data;
+    const { title, body, dayNumber, tag } = event.data;
     self.registration.showNotification(title || '⚡ Lock-In Protocol Daily Briefing', {
       body: body || 'Time to lock in and review your tasks!',
       icon: '/icon-192.png',
       badge: '/icon-192.png',
       vibrate: [200, 100, 200, 100, 200],
-      tag: 'daily-protocol-briefing',
+      tag: tag || 'daily-protocol-briefing',
       renotify: true,
       data: {
         url: '/',
         dayNumber: dayNumber || 1,
       },
-      actions: [
-        { action: 'open_protocol', title: '⚡ Open Protocol' },
-        { action: 'dismiss', title: 'Dismiss' },
-      ],
     });
   }
 });
+
 

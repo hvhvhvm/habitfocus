@@ -54,13 +54,30 @@ class PushSubscriptionKeys(BaseModel):
 class PushSubscriptionCreate(BaseModel):
     endpoint: str
     keys: PushSubscriptionKeys
-    preferredTime: Optional[str] = "08:00"
+    preferredTime: Optional[str] = "07:00"
+    morningTime: Optional[str] = "07:00"
+    afternoonTime: Optional[str] = "12:30"
+    eveningTime: Optional[str] = "17:30"
+    nightTime: Optional[str] = "21:30"
+    notifyMorning: Optional[bool] = True
+    notifyAfternoon: Optional[bool] = True
+    notifyEvening: Optional[bool] = True
+    notifyNight: Optional[bool] = True
     timezone: Optional[str] = "UTC"
 
 class NotificationPreferencesUpdate(BaseModel):
-    preferredTime: Optional[str] = "08:00"
+    preferredTime: Optional[str] = "07:00"
+    morningTime: Optional[str] = "07:00"
+    afternoonTime: Optional[str] = "12:30"
+    eveningTime: Optional[str] = "17:30"
+    nightTime: Optional[str] = "21:30"
+    notifyMorning: Optional[bool] = True
+    notifyAfternoon: Optional[bool] = True
+    notifyEvening: Optional[bool] = True
+    notifyNight: Optional[bool] = True
     timezone: Optional[str] = "UTC"
     isActive: Optional[bool] = True
+
 
 
 
