@@ -29,7 +29,7 @@ export const DEFAULT_SCHEDULE_CONFIG: NotificationScheduleConfig = {
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding)
-    .replace(/\-/g, '+')
+    .replace(/-/g, '+')
     .replace(/_/g, '/');
 
   const rawData = window.atob(base64);
@@ -41,26 +41,41 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   return outputArray;
 }
 
+export function isIOSDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+}
+
+export function isStandalonePWA(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    window.matchMedia('(display-mode: standalone)').matches ||
+    (navigator as any).standalone === true ||
+    document.referrer.includes('android-app://')
+  );
+}
+
 export async function isPushNotificationSupported(): Promise<boolean> {
-  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  if (typeof window === 'undefined') return false;
+  return 'serviceWorker' in navigator && 'Notification' in window;
 }
 
 export function getNotificationPermissionState(): NotificationPermission {
-  if (!('Notification' in window)) return 'denied';
+  if (typeof window === 'undefined' || !('Notification' in window)) return 'default';
   return Notification.permission;
 }
 
 export async function getServiceWorkerRegistration(): Promise<ServiceWorkerRegistration | null> {
-  if (!('serviceWorker' in navigator)) return null;
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return null;
   try {
     let reg = await navigator.serviceWorker.getRegistration();
     if (!reg) {
-      reg = await navigator.serviceWorker.register('/sw.js');
+      reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
     }
     await navigator.serviceWorker.ready;
     return reg;
   } catch (err) {
-    console.warn('Could not get/register service worker:', err);
+    console.warn('Service worker registration notice:', err);
     return null;
   }
 }
@@ -86,7 +101,7 @@ export function saveLocalScheduleConfig(config: Partial<NotificationScheduleConf
 
 export async function ensurePushSubscriptionActive(): Promise<boolean> {
   try {
-    if (!('Notification' in window) || Notification.permission !== 'granted') {
+    if (typeof window === 'undefined' || !('Notification' in window) || Notification.permission !== 'granted') {
       return false;
     }
 
@@ -106,8 +121,13 @@ export async function ensurePushSubscriptionActive(): Promise<boolean> {
       subscription = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: convertedVapidKey,
+      }).catch((subErr) => {
+        console.warn('PushManager subscription notice:', subErr);
+        return null;
       });
     }
+
+    if (!subscription) return false;
 
     const subJson = subscription.toJSON();
     const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -130,7 +150,7 @@ export async function ensurePushSubscriptionActive(): Promise<boolean> {
         notifyEvening: schedule.notifyEvening,
         notifyNight: schedule.notifyNight,
         timezone: userTimezone,
-      });
+      }).catch(() => {});
 
       localStorage.setItem('lockin_push_sub', JSON.stringify({
         endpoint: subJson.endpoint,
@@ -142,23 +162,56 @@ export async function ensurePushSubscriptionActive(): Promise<boolean> {
     }
     return false;
   } catch (e) {
-    console.warn('Auto-sync push subscription notice:', e);
+    console.warn('Push sync notice:', e);
     return false;
   }
 }
 
+/**
+ * iOS & Safari compatible Permission Requester & Push Subscriber
+ */
 export async function requestPushNotificationSubscription(customSchedule?: Partial<NotificationScheduleConfig>): Promise<{ success: boolean; error?: string }> {
   try {
+    const isIOS = isIOSDevice();
+    const isStandalone = isStandalonePWA();
+
     if (!('Notification' in window)) {
-      return { success: false, error: 'Notifications are not supported on this browser. On iPhone, make sure you tap "Add to Home Screen" first.' };
+      if (isIOS) {
+        return {
+          success: false,
+          error: 'On iPhone / iPad, Apple requires adding Lock-In to your Home Screen first. Tap Share (⬆️) > "Add to Home Screen" (+), then open the app and tap Enable.',
+        };
+      }
+      return { success: false, error: 'Notifications are not supported by this browser.' };
     }
 
-    // 1. Request permission from user (Native iOS / Android / Desktop prompt)
-    const permission = await Notification.requestPermission();
+    // 1. Direct synchronous user-gesture request (Dual Promise / Callback compatible for all iOS Safari versions)
+    let permission: NotificationPermission = 'default';
+    if (typeof Notification.requestPermission === 'function') {
+      try {
+        const pResult = Notification.requestPermission();
+        if (pResult && typeof (pResult as any).then === 'function') {
+          permission = await pResult;
+        } else {
+          permission = await new Promise<NotificationPermission>((resolve) => {
+            Notification.requestPermission((p) => resolve(p));
+          });
+        }
+      } catch (reqErr) {
+        console.warn('requestPermission call error:', reqErr);
+      }
+    }
+
     if (permission !== 'granted') {
+      if (isIOS && !isStandalone) {
+        return {
+          success: false,
+          error: 'Notification permission requires Home Screen installation on iOS. Tap Share (⬆️) > "Add to Home Screen", open the Home Screen icon, and tap Enable.',
+        };
+      }
       return {
         success: false,
-        error: 'Notification permission was denied. Please allow notifications in iPhone Settings > Safari > Notifications.',
+        error: 'Notification permission was denied. Please allow notifications in device Settings.',
       };
     }
 
@@ -178,26 +231,31 @@ export async function requestPushNotificationSubscription(customSchedule?: Parti
 
     // 4. Web PushManager subscription
     if (registration && 'pushManager' in registration) {
-      const convertedVapidKey = urlBase64ToUint8Array(publicKey);
-      let subscription = await registration.pushManager.getSubscription().catch(() => null);
+      try {
+        const convertedVapidKey = urlBase64ToUint8Array(publicKey);
+        let subscription = await registration.pushManager.getSubscription().catch(() => null);
 
-      if (subscription) {
-        // Test existing subscription, if key changed unsubscribe and recreate
-        try {
-          subJson = subscription.toJSON();
-        } catch (e) {
-          await subscription.unsubscribe().catch(() => {});
-          subscription = null;
+        if (subscription) {
+          try {
+            subJson = subscription.toJSON();
+          } catch (e) {
+            await subscription.unsubscribe().catch(() => {});
+            subscription = null;
+          }
         }
-      }
 
-      if (!subscription) {
-        subscription = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: convertedVapidKey,
-        });
+        if (!subscription) {
+          subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: convertedVapidKey,
+          });
+        }
+        if (subscription) {
+          subJson = subscription.toJSON();
+        }
+      } catch (pushErr) {
+        console.warn('PushManager registration notice (local notifications remain active):', pushErr);
       }
-      subJson = subscription.toJSON();
     }
 
     const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -218,7 +276,7 @@ export async function requestPushNotificationSubscription(customSchedule?: Parti
     };
     localStorage.setItem('lockin_push_sub', JSON.stringify(localSubRecord));
 
-    // 6. Sync to FastAPI backend
+    // 6. Sync to FastAPI backend (if endpoint available)
     if (subJson?.endpoint && subJson?.keys?.p256dh && subJson?.keys?.auth) {
       try {
         await api.subscribePush({
@@ -239,13 +297,16 @@ export async function requestPushNotificationSubscription(customSchedule?: Parti
           timezone: userTimezone,
         });
       } catch (err) {
-        console.warn('Backend push registration sync issue:', err);
+        console.warn('Backend push sync notice:', err);
       }
     }
 
+    // Start local background ticker immediately
+    initLocalNotificationScheduler();
+
     return { success: true };
   } catch (err: any) {
-    console.error('Failed to subscribe to push notifications:', err);
+    console.error('Failed to subscribe to notifications:', err);
     return { success: false, error: err?.message || 'Failed to enable notifications on this device.' };
   }
 }
@@ -254,47 +315,174 @@ export async function requestPushNotificationSubscription(customSchedule?: Parti
 // Client-Side In-App Notification Scheduler (Dual Reliability Ticker)
 // ---------------------------------------------------------------------------
 let localSchedulerInterval: any = null;
+let listenersInitialized = false;
+
+function timeToMinutes(timeStr: string): number {
+  const [h, m] = (timeStr || '00:00').split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+export function evaluateAndDispatchScheduledAlerts(): void {
+  try {
+    if (getNotificationPermissionState() !== 'granted') return;
+
+    const now = new Date();
+    const hours = String(now.getHours()).padStart(2, '0');
+    const mins = String(now.getMinutes()).padStart(2, '0');
+    const currentTimeStr = `${hours}:${mins}`;
+    const currentMins = now.getHours() * 60 + now.getMinutes();
+    const todayDateStr = now.toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
+
+    const schedule = getLocalScheduleConfig();
+
+    const morningMins = timeToMinutes(schedule.morningTime || schedule.preferredTime || '07:00');
+    const afternoonMins = timeToMinutes(schedule.afternoonTime || '12:30');
+    const eveningMins = timeToMinutes(schedule.eveningTime || '17:30');
+    const nightMins = timeToMinutes(schedule.nightTime || '21:30');
+
+    // Time-window based scheduling:
+    // Dispatches if current time is within active block window and hasn't been sent yet today
+    const blocksToCheck = [
+      {
+        block: 'morning',
+        enabled: schedule.notifyMorning !== false,
+        startMins: morningMins,
+        endMins: afternoonMins,
+        timeStr: schedule.morningTime || '07:00',
+      },
+      {
+        block: 'afternoon',
+        enabled: schedule.notifyAfternoon !== false,
+        startMins: afternoonMins,
+        endMins: eveningMins,
+        timeStr: schedule.afternoonTime || '12:30',
+      },
+      {
+        block: 'evening',
+        enabled: schedule.notifyEvening !== false,
+        startMins: eveningMins,
+        endMins: nightMins,
+        timeStr: schedule.eveningTime || '17:30',
+      },
+      {
+        block: 'night',
+        enabled: schedule.notifyNight !== false,
+        startMins: nightMins,
+        endMins: 1440, // 24:00
+        timeStr: schedule.nightTime || '21:30',
+      },
+    ];
+
+    for (const item of blocksToCheck) {
+      if (!item.enabled) continue;
+
+      const sentKey = `lockin_local_sent_${item.block}_${todayDateStr}`;
+      const isAlreadySent = localStorage.getItem(sentKey) === 'true';
+
+      // If exact minute match OR currently in active window and hasn't been sent yet today
+      const isExactMinute = currentTimeStr === item.timeStr;
+      const isInActiveWindow = currentMins >= item.startMins && currentMins < item.endMins;
+
+      if (!isAlreadySent && (isExactMinute || isInActiveWindow)) {
+        localStorage.setItem(sentKey, 'true');
+        console.log(`⚡ [LocalScheduler] Dispatching ${item.block} briefing for ${todayDateStr} at ${currentTimeStr}`);
+        testTimeBlockNotification(item.block);
+      }
+    }
+  } catch (e) {
+    console.warn('Local notification check notice:', e);
+  }
+}
 
 export function initLocalNotificationScheduler(): void {
-  if (localSchedulerInterval) return;
+  if (typeof window === 'undefined') return;
 
-  const checkScheduledBlocks = () => {
-    try {
-      if (getNotificationPermissionState() !== 'granted') return;
+  if (!localSchedulerInterval) {
+    // Run every 20 seconds
+    localSchedulerInterval = setInterval(evaluateAndDispatchScheduledAlerts, 20000);
+  }
 
-      const now = new Date();
-      const hours = String(now.getHours()).padStart(2, '0');
-      const mins = String(now.getMinutes()).padStart(2, '0');
-      const currentTimeStr = `${hours}:${mins}`;
-      const todayDateStr = now.toISOString().split('T')[0];
+  if (!listenersInitialized) {
+    listenersInitialized = true;
 
-      const schedule = getLocalScheduleConfig();
-
-      const blocksToCheck = [
-        { block: 'morning', time: schedule.morningTime || schedule.preferredTime || '07:00', enabled: schedule.notifyMorning !== false },
-        { block: 'afternoon', time: schedule.afternoonTime || '12:30', enabled: schedule.notifyAfternoon !== false },
-        { block: 'evening', time: schedule.eveningTime || '17:30', enabled: schedule.notifyEvening !== false },
-        { block: 'night', time: schedule.nightTime || '21:30', enabled: schedule.notifyNight !== false },
-      ];
-
-      for (const item of blocksToCheck) {
-        if (item.enabled && item.time === currentTimeStr) {
-          const sentKey = `lockin_local_sent_${item.block}_${todayDateStr}`;
-          if (!localStorage.getItem(sentKey)) {
-            localStorage.setItem(sentKey, 'true');
-            console.log(`⚡ [LocalScheduler] Dispatching ${item.block} notification at ${currentTimeStr}`);
-            testTimeBlockNotification(item.block);
-          }
-        }
+    // Evaluate immediately when user returns to app, unlocks screen, or reconnects
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        evaluateAndDispatchScheduledAlerts();
       }
-    } catch (e) {
-      console.warn('Local notification check error:', e);
-    }
-  };
+    });
 
-  // Run every 20 seconds
-  localSchedulerInterval = setInterval(checkScheduledBlocks, 20000);
-  checkScheduledBlocks();
+    window.addEventListener('focus', () => {
+      evaluateAndDispatchScheduledAlerts();
+    });
+
+    window.addEventListener('online', () => {
+      evaluateAndDispatchScheduledAlerts();
+    });
+
+    // Listen for push subscription renewal from ServiceWorker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data?.type === 'PUSH_SUBSCRIPTION_CHANGED') {
+          ensurePushSubscriptionActive().catch(() => {});
+        }
+      });
+    }
+  }
+
+  evaluateAndDispatchScheduledAlerts();
+}
+
+export interface CustomNotificationOptions extends NotificationOptions {
+  renotify?: boolean;
+  vibrate?: number[];
+}
+
+/**
+ * Universal Notification Dispatcher (Service Worker + In-App Fallback)
+ */
+async function showNotificationSafely(title: string, options: CustomNotificationOptions): Promise<boolean> {
+  try {
+    if ('serviceWorker' in navigator) {
+      let reg = await navigator.serviceWorker.ready.catch(() => null);
+      if (!reg) {
+        reg = await getServiceWorkerRegistration();
+      }
+      if (reg && 'showNotification' in reg) {
+        // Sanitize options for iOS WebKit
+        const cleanOpts: any = {
+          body: options.body || '',
+          icon: options.icon || '/icon-192.png',
+          badge: options.badge || '/icon-192.png',
+          tag: options.tag || `lockin-${Date.now()}`,
+          renotify: options.renotify !== false,
+          data: options.data || {},
+        };
+
+        if ('vibrate' in navigator && options.vibrate) {
+          cleanOpts.vibrate = options.vibrate;
+        }
+
+        await reg.showNotification(title, cleanOpts);
+        return true;
+      }
+    }
+
+    // Fallback if service worker is not ready on desktop browsers
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification(title, {
+          body: options.body,
+          icon: options.icon || '/icon-192.png',
+        });
+        return true;
+      } catch (e) {}
+    }
+    return false;
+  } catch (err) {
+    console.warn('showNotificationSafely notice:', err);
+    return false;
+  }
 }
 
 export async function testMobilePushNotification(customPayload?: {
@@ -333,22 +521,17 @@ export async function testMobilePushNotification(customPayload?: {
       body = `Day ${dayNum}: You have ${remainingCount} tasks scheduled today:\n☀️ Morning: ${mCount} tasks\n✨ Afternoon: ${aCount} tasks\n🌇 Evening: ${eCount} tasks\n🌙 Night: ${nCount} tasks\n🔥 Streak: ${streak} days active. Time to lock in!`;
     }
 
-    if ('serviceWorker' in navigator) {
-      const reg = await navigator.serviceWorker.ready.catch(() => null);
-      if (reg) {
-        await reg.showNotification(title, {
-          body,
-          icon: '/icon-192.png',
-          badge: '/icon-192.png',
-          vibrate: [200, 100, 200, 100, 200],
-          tag: 'daily-protocol-briefing',
-          renotify: true,
-          data: { url: '/', dayNumber: dayNum },
-        });
-      }
-    }
+    await showNotificationSafely(title, {
+      body,
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      tag: 'daily-protocol-briefing',
+      renotify: true,
+      data: { url: '/', dayNumber: dayNum },
+    });
+
     api.sendTestPushNotification().catch(() => {});
-    return { success: true, message: '⚡ Daily Briefing delivered to your phone lockscreen!' };
+    return { success: true, message: '⚡ Daily Briefing delivered to your device lockscreen!' };
   } catch (err: any) {
     return { success: false, message: err?.message || 'Failed delivering test notification.' };
   }
@@ -454,7 +637,7 @@ export async function testTimeBlockNotification(
     } else if (timeBlock === 'evening') {
       proteinLine = totalProtein >= proteinGoal
         ? `🥩 Protein: ${totalProtein}g/${proteinGoal}g (Goal Met! 🏆)`
-        : `🥩 Protein: ${totalProtein}g/${proteinGoal}g (${remProtein}g left — time for dinner/shake!)`;
+        : `🥩 Protein: ${totalProtein}g/${proteinGoal}g (${remProtein}g left — dinner/shake)`;
     } else {
       proteinLine = totalProtein >= proteinGoal
         ? `🥩 Protein: ${totalProtein}g/${proteinGoal}g (+20 PTS Earned! 🏆)`
@@ -477,25 +660,19 @@ export async function testTimeBlockNotification(
       body = `Day ${dayNum}: ${blockCount} ${timeBlock.charAt(0).toUpperCase() + timeBlock.slice(1)} task${blockCount !== 1 ? 's' : ''} (${totalRemaining} left today):\n${preview}${extra}\n${proteinLine}\n💡 "${quote}"\n🔥 Streak: ${streak} days. Lock in!`;
     }
 
-    if ('serviceWorker' in navigator) {
-      const reg = await navigator.serviceWorker.ready.catch(() => null);
-      if (reg) {
-        await reg.showNotification(title, {
-          body,
-          icon: '/icon-192.png',
-          badge: '/icon-192.png',
-          vibrate: [200, 100, 200],
-          tag: `block-briefing-${timeBlock}`,
-          renotify: true,
-          data: { url: '/', dayNumber: dayNum },
-        });
-      }
-    }
+    await showNotificationSafely(title, {
+      body,
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      tag: `block-briefing-${timeBlock}`,
+      renotify: true,
+      data: { url: '/', dayNumber: dayNum, timeBlock },
+    });
 
     // Also attempt backend dispatch (non-blocking)
     api.sendTestBlockPushNotification(timeBlock).catch(() => {});
 
-    return { success: true, message: `${meta.icon} ${meta.name} briefing sent to your phone!` };
+    return { success: true, message: `${meta.icon} ${meta.name} briefing sent to your device!` };
   } catch (err: any) {
     return { success: false, message: err?.message || 'Failed sending time-block notification.' };
   }

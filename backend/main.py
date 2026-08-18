@@ -47,16 +47,25 @@ for migration_sql in [
 # Background Scheduler: Timezone-aware per-minute dispatcher
 # ---------------------------------------------------------------------------
 
+def time_str_to_minutes(time_str: str) -> int:
+    try:
+        parts = (time_str or "00:00").split(":")
+        return int(parts[0]) * 60 + int(parts[1])
+    except Exception:
+        return 0
+
 def check_and_dispatch_scheduled_notifications():
     """
     Runs every minute. Iterates all active push subscriptions,
     computes each user's local time in their configured timezone,
-    and dispatches morning / afternoon / evening / night task briefings.
+    and dispatches morning / afternoon / evening / night task briefings
+    using time-window resilience.
     """
     from backend.notifications import send_time_block_briefing_to_user
     import zoneinfo
 
     db = SessionLocal()
+    dispatched_count = 0
     try:
         subs = db.query(PushSubscription).filter(PushSubscription.is_active == True).all()
         for sub in subs:
@@ -70,41 +79,56 @@ def check_and_dispatch_scheduled_notifications():
                 now_local = datetime.now(user_tz)
                 current_time = now_local.strftime("%H:%M")
                 current_date = now_local.strftime("%Y-%m-%d")
+                current_mins = now_local.hour * 60 + now_local.minute
 
                 user = db.query(User).filter(User.id == sub.user_id).first()
                 if not user:
                     continue
 
-                # ☀️ Morning Briefing
                 morning_target = sub.morning_time or sub.preferred_time or "07:00"
-                if (sub.notify_morning is not False) and (current_time == morning_target) and (sub.last_morning_sent != current_date):
+                afternoon_target = sub.afternoon_time or "12:30"
+                evening_target = sub.evening_time or "17:30"
+                night_target = sub.night_time or "21:30"
+
+                m_mins = time_str_to_minutes(morning_target)
+                a_mins = time_str_to_minutes(afternoon_target)
+                e_mins = time_str_to_minutes(evening_target)
+                n_mins = time_str_to_minutes(night_target)
+
+                # ☀️ Morning Briefing
+                in_morning_window = current_mins >= m_mins and current_mins < a_mins
+                if (sub.notify_morning is not False) and (current_time == morning_target or in_morning_window) and (sub.last_morning_sent != current_date):
                     logger.info(f"[Scheduler] ☀️ Dispatching Morning Briefing to user {user.id} ({user.email}) at local time {current_time} ({tz_name})")
                     send_time_block_briefing_to_user(user, db, "morning")
                     sub.last_morning_sent = current_date
+                    dispatched_count += 1
                     db.commit()
 
                 # ✨ Afternoon Momentum Briefing
-                afternoon_target = sub.afternoon_time or "12:30"
-                if (sub.notify_afternoon is not False) and (current_time == afternoon_target) and (sub.last_afternoon_sent != current_date):
+                in_afternoon_window = current_mins >= a_mins and current_mins < e_mins
+                if (sub.notify_afternoon is not False) and (current_time == afternoon_target or in_afternoon_window) and (sub.last_afternoon_sent != current_date):
                     logger.info(f"[Scheduler] ✨ Dispatching Afternoon Briefing to user {user.id} ({user.email}) at local time {current_time} ({tz_name})")
                     send_time_block_briefing_to_user(user, db, "afternoon")
                     sub.last_afternoon_sent = current_date
+                    dispatched_count += 1
                     db.commit()
 
                 # 🌇 Evening Surge Briefing
-                evening_target = sub.evening_time or "17:30"
-                if (sub.notify_evening is not False) and (current_time == evening_target) and (sub.last_evening_sent != current_date):
+                in_evening_window = current_mins >= e_mins and current_mins < n_mins
+                if (sub.notify_evening is not False) and (current_time == evening_target or in_evening_window) and (sub.last_evening_sent != current_date):
                     logger.info(f"[Scheduler] 🌇 Dispatching Evening Briefing to user {user.id} ({user.email}) at local time {current_time} ({tz_name})")
                     send_time_block_briefing_to_user(user, db, "evening")
                     sub.last_evening_sent = current_date
+                    dispatched_count += 1
                     db.commit()
 
                 # 🌙 Night Protocol & Recovery
-                night_target = sub.night_time or "21:30"
-                if (sub.notify_night is not False) and (current_time == night_target) and (sub.last_night_sent != current_date):
+                in_night_window = current_mins >= n_mins or current_mins < m_mins
+                if (sub.notify_night is not False) and (current_time == night_target or in_night_window) and (sub.last_night_sent != current_date):
                     logger.info(f"[Scheduler] 🌙 Dispatching Night Briefing to user {user.id} ({user.email}) at local time {current_time} ({tz_name})")
                     send_time_block_briefing_to_user(user, db, "night")
                     sub.last_night_sent = current_date
+                    dispatched_count += 1
                     db.commit()
 
             except Exception as sub_err:
@@ -113,6 +137,7 @@ def check_and_dispatch_scheduled_notifications():
         logger.error(f"[Scheduler] Error in notification dispatcher loop: {e}")
     finally:
         db.close()
+    return dispatched_count
 
 
 scheduler = BackgroundScheduler(timezone="UTC")
@@ -1024,6 +1049,30 @@ def trigger_daily_briefing(
     from backend.notifications import send_daily_briefing_to_user
     result = send_daily_briefing_to_user(user, db)
     return result
+
+@app.api_route("/api/cron/dispatch-notifications", methods=["GET", "POST"])
+def cron_dispatch_notifications():
+    """
+    Webhook / Cron endpoint callable by Vercel Cron, external crons, or background workers.
+    Dispatches pending scheduled time-block briefings.
+    """
+    dispatched = check_and_dispatch_scheduled_notifications()
+    return {
+        "success": True,
+        "dispatchedAlerts": dispatched,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+@app.post("/api/notifications/dispatch-all")
+def manual_dispatch_all(
+    user: User = Depends(get_current_user)
+):
+    dispatched = check_and_dispatch_scheduled_notifications()
+    return {
+        "success": True,
+        "dispatchedAlerts": dispatched,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
 
 @app.delete("/api/notifications/unsubscribe")
 def unsubscribe_push_notifications(

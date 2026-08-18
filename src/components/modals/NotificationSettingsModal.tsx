@@ -11,6 +11,8 @@ import {
   getLocalScheduleConfig,
   saveLocalScheduleConfig,
   NotificationScheduleConfig,
+  isIOSDevice,
+  isStandalonePWA,
 } from '../../lib/notifications';
 import {
   Bell,
@@ -23,10 +25,9 @@ import {
   X,
   Share2,
   PlusSquare,
-  ShieldCheck,
-  Zap,
-  Save,
   Globe,
+  Save,
+  Sparkles,
 } from 'lucide-react';
 
 export const NotificationSettingsModal: React.FC = () => {
@@ -44,6 +45,8 @@ export const NotificationSettingsModal: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const detectedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const isIOS = isIOSDevice();
+  const isStandalone = isStandalonePWA();
 
   useEffect(() => {
     if (!isNotificationModalOpen) return;
@@ -114,7 +117,7 @@ export const NotificationSettingsModal: React.FC = () => {
       setTestStatusMessage('✅ Scheduled notifications activated successfully! Sending immediate test briefing...');
       await handleSendTestPush();
     } else {
-      setErrorMessage(result.error || 'Could not enable push notifications. Check browser permissions.');
+      setErrorMessage(result.error || 'Could not enable notifications. Check browser permissions.');
     }
   };
 
@@ -186,7 +189,7 @@ export const NotificationSettingsModal: React.FC = () => {
 
   const handleUnsubscribe = async () => {
     try {
-      await api.unsubscribePush();
+      await api.unsubscribePush().catch(() => {});
       setIsSubscribed(false);
       localStorage.removeItem('lockin_push_sub');
       setTestStatusMessage('Unsubscribed from scheduled push notifications.');
@@ -194,9 +197,6 @@ export const NotificationSettingsModal: React.FC = () => {
       console.error(e);
     }
   };
-
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
-  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
@@ -215,7 +215,7 @@ export const NotificationSettingsModal: React.FC = () => {
                 Scheduled Tasks & Protocol Alerts
               </h2>
               <p className="font-mono-code text-[11px] text-[#8A9891]">
-                Time-block briefings delivered at your exact scheduled hours
+                Time-block briefings delivered at your scheduled hours
               </p>
             </div>
           </div>
@@ -244,8 +244,13 @@ export const NotificationSettingsModal: React.FC = () => {
                 }`}
               />
               <div>
-                <div className="font-space font-bold text-sm text-[#F4F6F5]">
-                  {isSubscribed ? 'Scheduled Notifications Active' : 'Scheduled Notifications Inactive'}
+                <div className="font-space font-bold text-sm text-[#F4F6F5] flex items-center gap-2">
+                  <span>{isSubscribed ? 'Scheduled Notifications Active' : 'Scheduled Notifications Inactive'}</span>
+                  {isStandalone && (
+                    <span className="font-mono-code text-[9px] bg-[#3ECF8E]/20 text-[#3ECF8E] px-1.5 py-0.5 rounded-full">
+                      PWA Active
+                    </span>
+                  )}
                 </div>
                 <div className="text-[11px] font-mono-code text-[#8A9891] flex items-center gap-1.5 mt-0.5">
                   <Globe className="w-3 h-3 text-[#3ECF8E]" />
@@ -276,15 +281,15 @@ export const NotificationSettingsModal: React.FC = () => {
               <div className="space-y-1.5 bg-[#0F1512] p-3 rounded-xl border border-[#26332C] text-[11px] font-mono-code text-[#F4F6F5]">
                 <div className="flex items-center gap-2">
                   <span className="w-4 h-4 rounded-full bg-[#3ECF8E]/20 text-[#3ECF8E] flex items-center justify-center text-[10px]">1</span>
-                  <span>Tap the Safari <strong>Share</strong> button <Share2 className="w-3.5 h-3.5 inline text-[#3ECF8E]" /> at the bottom</span>
+                  <span>Tap Safari's <strong>Share</strong> button <Share2 className="w-3.5 h-3.5 inline text-[#3ECF8E]" /> at bottom</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="w-4 h-4 rounded-full bg-[#3ECF8E]/20 text-[#3ECF8E] flex items-center justify-center text-[10px]">2</span>
-                  <span>Scroll and tap <strong>Add to Home Screen</strong> <PlusSquare className="w-3.5 h-3.5 inline text-[#3ECF8E]" /></span>
+                  <span>Tap <strong>Add to Home Screen</strong> <PlusSquare className="w-3.5 h-3.5 inline text-[#3ECF8E]" /></span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="w-4 h-4 rounded-full bg-[#3ECF8E]/20 text-[#3ECF8E] flex items-center justify-center text-[10px]">3</span>
-                  <span>Open <strong>Lock-In</strong> from your Home Screen & tap <strong>Enable</strong></span>
+                  <span>Open <strong>Lock-In</strong> from Home Screen & tap <strong>Enable</strong> below</span>
                 </div>
               </div>
             </div>
@@ -478,4 +483,3 @@ export const NotificationSettingsModal: React.FC = () => {
     </div>
   );
 };
-
