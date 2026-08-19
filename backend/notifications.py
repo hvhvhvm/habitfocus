@@ -278,7 +278,12 @@ def send_push_notification(subscription: PushSubscription, payload: Dict[str, An
             vapid_private_key=vapid_keys["private_key"],
             vapid_claims={"sub": vapid_keys["claims_sub"]},
             ttl=86400,
+            headers={
+                "Urgency": "high",
+                "Topic": "lockin-protocol",
+            },
         )
+        logger.info(f"Successfully sent Web Push to endpoint: {subscription.endpoint[:40]}...")
         return True
     except WebPushException as ex:
         logger.warning(f"WebPush error: {ex}")
