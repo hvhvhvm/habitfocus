@@ -123,6 +123,24 @@ class Routine(Base):
     logs = relationship("RoutineLog", back_populates="routine", cascade="all, delete-orphan")
 
     def to_dict(self):
+        normalized_subtasks = []
+        for idx, st in enumerate(self.subtasks or []):
+            if isinstance(st, dict):
+                st_id = st.get("id") or f"sub_{idx}"
+                st_name = st.get("name") or st.get("text") or f"Step {idx+1}"
+                st_completed = bool(st.get("completed", False))
+                normalized_subtasks.append({
+                    "id": st_id,
+                    "name": st_name,
+                    "completed": st_completed,
+                })
+            elif isinstance(st, str):
+                normalized_subtasks.append({
+                    "id": f"sub_{idx}",
+                    "name": st,
+                    "completed": False,
+                })
+
         return {
             "id": self.id,
             "userId": self.user_id,
@@ -130,9 +148,10 @@ class Routine(Base):
             "title": self.name,
             "icon": self.icon,
             "durationMins": self.duration_mins,
-            "totalSteps": self.total_steps,
+            "totalSteps": len(normalized_subtasks) or self.total_steps,
             "completed": self.completed,
-            "subtasks": self.subtasks or [],
+            "subtasks": normalized_subtasks,
+            "tasks": [s["name"] for s in normalized_subtasks],
             "isMaster": True,
         }
 

@@ -95,9 +95,8 @@ def check_and_dispatch_scheduled_notifications():
                 e_mins = time_str_to_minutes(evening_target)
                 n_mins = time_str_to_minutes(night_target)
 
-                # ☀️ Morning Briefing
-                in_morning_window = current_mins >= m_mins and current_mins < a_mins
-                if (sub.notify_morning is not False) and (current_time == morning_target or in_morning_window) and (sub.last_morning_sent != current_date):
+                # ☀️ Morning Briefing (matches target time within 2 min window)
+                if (sub.notify_morning is not False) and (abs(current_mins - m_mins) <= 1) and (sub.last_morning_sent != current_date):
                     logger.info(f"[Scheduler] ☀️ Dispatching Morning Briefing to user {user.id} ({user.email}) at local time {current_time} ({tz_name})")
                     send_time_block_briefing_to_user(user, db, "morning")
                     sub.last_morning_sent = current_date
@@ -105,8 +104,7 @@ def check_and_dispatch_scheduled_notifications():
                     db.commit()
 
                 # ✨ Afternoon Momentum Briefing
-                in_afternoon_window = current_mins >= a_mins and current_mins < e_mins
-                if (sub.notify_afternoon is not False) and (current_time == afternoon_target or in_afternoon_window) and (sub.last_afternoon_sent != current_date):
+                if (sub.notify_afternoon is not False) and (abs(current_mins - a_mins) <= 1) and (sub.last_afternoon_sent != current_date):
                     logger.info(f"[Scheduler] ✨ Dispatching Afternoon Briefing to user {user.id} ({user.email}) at local time {current_time} ({tz_name})")
                     send_time_block_briefing_to_user(user, db, "afternoon")
                     sub.last_afternoon_sent = current_date
@@ -114,8 +112,7 @@ def check_and_dispatch_scheduled_notifications():
                     db.commit()
 
                 # 🌇 Evening Surge Briefing
-                in_evening_window = current_mins >= e_mins and current_mins < n_mins
-                if (sub.notify_evening is not False) and (current_time == evening_target or in_evening_window) and (sub.last_evening_sent != current_date):
+                if (sub.notify_evening is not False) and (abs(current_mins - e_mins) <= 1) and (sub.last_evening_sent != current_date):
                     logger.info(f"[Scheduler] 🌇 Dispatching Evening Briefing to user {user.id} ({user.email}) at local time {current_time} ({tz_name})")
                     send_time_block_briefing_to_user(user, db, "evening")
                     sub.last_evening_sent = current_date
@@ -123,8 +120,7 @@ def check_and_dispatch_scheduled_notifications():
                     db.commit()
 
                 # 🌙 Night Protocol & Recovery
-                in_night_window = current_mins >= n_mins or current_mins < m_mins
-                if (sub.notify_night is not False) and (current_time == night_target or in_night_window) and (sub.last_night_sent != current_date):
+                if (sub.notify_night is not False) and (abs(current_mins - n_mins) <= 1) and (sub.last_night_sent != current_date):
                     logger.info(f"[Scheduler] 🌙 Dispatching Night Briefing to user {user.id} ({user.email}) at local time {current_time} ({tz_name})")
                     send_time_block_briefing_to_user(user, db, "night")
                     sub.last_night_sent = current_date
@@ -276,11 +272,24 @@ def simulate_next_day(
     # Run the rollover logic to force-advance 1 day
     execute_rollover_logic(user, db, 1, next_date_str)
 
+    # Fetch fresh protein entries for new day
+    protein_logs = db.query(ProteinLog).filter(
+        ProteinLog.user_id == user.id,
+        ProteinLog.logged_date == next_date_str
+    ).all()
+    total_protein = sum(l.protein_grams for l in protein_logs)
+
     return {
         "success": True,
         "user": user.to_dict(),
         "tasks": [t.to_dict() for t in db.query(Task).filter(Task.user_id == user.id).all()],
         "routines": [r.to_dict() for r in db.query(Routine).filter(Routine.user_id == user.id).all()],
+        "protein": {
+            "entries": [l.to_dict() for l in protein_logs],
+            "totalLoggedGrams": total_protein,
+            "goalGrams": user.protein_goal or 160,
+            "remainingGrams": max(0, (user.protein_goal or 160) - total_protein),
+        },
         "message": f"Successfully simulated rollover to Day {user.day_number} ({next_date_str})!",
     }
 
@@ -504,6 +513,7 @@ def toggle_routine_subtask(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    from sqlalchemy.orm.attributes import flag_modified
     routine = db.query(Routine).filter(Routine.id == routine_id, Routine.user_id == user.id).first()
     if not routine:
         raise HTTPException(status_code=404, detail="Routine not found")
@@ -512,16 +522,18 @@ def toggle_routine_subtask(
     updated_subtasks = []
     all_completed = True
 
-    for st in subtasks:
-        st_dict = dict(st)
-        if st_dict.get("id") == subtask_id:
+    for idx, st in enumerate(subtasks):
+        st_dict = dict(st) if isinstance(st, dict) else {"id": f"sub_{idx}", "name": str(st), "completed": False}
+        curr_id = st_dict.get("id") or f"sub_{idx}"
+        if curr_id == subtask_id:
             st_dict["completed"] = not st_dict.get("completed", False)
         updated_subtasks.append(st_dict)
         if not st_dict.get("completed", False):
             all_completed = False
 
     routine.subtasks = updated_subtasks
-    routine.completed = all_completed
+    flag_modified(routine, "subtasks")
+    routine.completed = all_completed and len(updated_subtasks) > 0
     db.commit()
     db.refresh(routine)
 
@@ -538,6 +550,7 @@ def toggle_routine_complete(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    from sqlalchemy.orm.attributes import flag_modified
     routine = db.query(Routine).filter(Routine.id == routine_id, Routine.user_id == user.id).first()
     if not routine:
         raise HTTPException(status_code=404, detail="Routine not found")
@@ -547,11 +560,12 @@ def toggle_routine_complete(
     routine.completed = not routine.completed
     subtasks = routine.subtasks or []
     updated_subtasks = []
-    for st in subtasks:
-        st_dict = dict(st)
+    for idx, st in enumerate(subtasks):
+        st_dict = dict(st) if isinstance(st, dict) else {"id": f"sub_{idx}", "name": str(st), "completed": False}
         st_dict["completed"] = routine.completed
         updated_subtasks.append(st_dict)
     routine.subtasks = updated_subtasks
+    flag_modified(routine, "subtasks")
 
     if routine.completed:
         user.points += 75
@@ -607,19 +621,19 @@ def get_protein_log(
     db: Session = Depends(get_db)
 ):
     local_date = request.headers.get("x-local-date") or datetime.utcnow().strftime("%Y-%m-%d")
-    # Only return TODAY's entries so the dashboard shows today's intake
+    # Only return TODAY's entries so the dashboard reflects today's fresh log
     logs = db.query(ProteinLog).filter(
         ProteinLog.user_id == user.id,
-        (ProteinLog.logged_date == local_date) | (ProteinLog.logged_date == "") | (ProteinLog.logged_date == None)
-    ).all()
+        ProteinLog.logged_date == local_date
+    ).order_by(ProteinLog.created_at.desc()).all()
     entries = [l.to_dict() for l in logs]
     total_logged = sum(l.protein_grams for l in logs)
 
     return {
         "entries": entries,
         "totalLoggedGrams": total_logged,
-        "goalGrams": user.protein_goal,
-        "remainingGrams": max(0, user.protein_goal - total_logged),
+        "goalGrams": user.protein_goal or 160,
+        "remainingGrams": max(0, (user.protein_goal or 160) - total_logged),
     }
 
 @app.post("/api/protein-log")
@@ -634,7 +648,7 @@ def add_protein_entry(
         user_id=user.id,
         food_name=req.foodName,
         protein_grams=req.proteinGrams,
-        logged_time=req.time or "Just now",
+        logged_time=req.time or datetime.now().strftime("%I:%M %p"),
         logged_date=local_date,
     )
     db.add(entry)
@@ -644,12 +658,12 @@ def add_protein_entry(
     # Only today's logs count toward the daily total
     logs = db.query(ProteinLog).filter(
         ProteinLog.user_id == user.id,
-        (ProteinLog.logged_date == local_date) | (ProteinLog.logged_date == "") | (ProteinLog.logged_date == None)
-    ).all()
+        ProteinLog.logged_date == local_date
+    ).order_by(ProteinLog.created_at.desc()).all()
     total_logged = sum(l.protein_grams for l in logs)
 
-    # Award points if user met daily goal (only first time)
-    if total_logged >= user.protein_goal and total_logged - req.proteinGrams < user.protein_goal:
+    # Award points if user met daily goal
+    if total_logged >= (user.protein_goal or 160) and (total_logged - req.proteinGrams) < (user.protein_goal or 160):
         user.points += 20
         db.commit()
         db.refresh(user)
@@ -657,8 +671,8 @@ def add_protein_entry(
     data = {
         "entries": [l.to_dict() for l in logs],
         "totalLoggedGrams": total_logged,
-        "goalGrams": user.protein_goal,
-        "remainingGrams": max(0, user.protein_goal - total_logged),
+        "goalGrams": user.protein_goal or 160,
+        "remainingGrams": max(0, (user.protein_goal or 160) - total_logged),
     }
 
     return {
@@ -684,15 +698,15 @@ def delete_protein_entry(
 
     logs = db.query(ProteinLog).filter(
         ProteinLog.user_id == user.id,
-        (ProteinLog.logged_date == local_date) | (ProteinLog.logged_date == "") | (ProteinLog.logged_date == None)
-    ).all()
+        ProteinLog.logged_date == local_date
+    ).order_by(ProteinLog.created_at.desc()).all()
     total_logged = sum(l.protein_grams for l in logs)
 
     return {
         "entries": [l.to_dict() for l in logs],
         "totalLoggedGrams": total_logged,
-        "goalGrams": user.protein_goal,
-        "remainingGrams": max(0, user.protein_goal - total_logged),
+        "goalGrams": user.protein_goal or 160,
+        "remainingGrams": max(0, (user.protein_goal or 160) - total_logged),
     }
 
 @app.put("/api/protein-goal")

@@ -327,9 +327,6 @@ export function evaluateAndDispatchScheduledAlerts(): void {
     if (getNotificationPermissionState() !== 'granted') return;
 
     const now = new Date();
-    const hours = String(now.getHours()).padStart(2, '0');
-    const mins = String(now.getMinutes()).padStart(2, '0');
-    const currentTimeStr = `${hours}:${mins}`;
     const currentMins = now.getHours() * 60 + now.getMinutes();
     const todayDateStr = now.toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
 
@@ -340,36 +337,26 @@ export function evaluateAndDispatchScheduledAlerts(): void {
     const eveningMins = timeToMinutes(schedule.eveningTime || '17:30');
     const nightMins = timeToMinutes(schedule.nightTime || '21:30');
 
-    // Time-window based scheduling:
-    // Dispatches if current time is within active block window and hasn't been sent yet today
     const blocksToCheck = [
       {
         block: 'morning',
         enabled: schedule.notifyMorning !== false,
-        startMins: morningMins,
-        endMins: afternoonMins,
-        timeStr: schedule.morningTime || '07:00',
+        targetMins: morningMins,
       },
       {
         block: 'afternoon',
         enabled: schedule.notifyAfternoon !== false,
-        startMins: afternoonMins,
-        endMins: eveningMins,
-        timeStr: schedule.afternoonTime || '12:30',
+        targetMins: afternoonMins,
       },
       {
         block: 'evening',
         enabled: schedule.notifyEvening !== false,
-        startMins: eveningMins,
-        endMins: nightMins,
-        timeStr: schedule.eveningTime || '17:30',
+        targetMins: eveningMins,
       },
       {
         block: 'night',
         enabled: schedule.notifyNight !== false,
-        startMins: nightMins,
-        endMins: 1440, // 24:00
-        timeStr: schedule.nightTime || '21:30',
+        targetMins: nightMins,
       },
     ];
 
@@ -378,14 +365,22 @@ export function evaluateAndDispatchScheduledAlerts(): void {
 
       const sentKey = `lockin_local_sent_${item.block}_${todayDateStr}`;
       const isAlreadySent = localStorage.getItem(sentKey) === 'true';
+      if (isAlreadySent) continue;
 
-      // If exact minute match OR currently in active window and hasn't been sent yet today
-      const isExactMinute = currentTimeStr === item.timeStr;
-      const isInActiveWindow = currentMins >= item.startMins && currentMins < item.endMins;
+      // Only dispatch if current time is within 1 minute of the exact scheduled target time
+      const isExactTargetMinute = Math.abs(currentMins - item.targetMins) <= 1;
 
-      if (!isAlreadySent && (isExactMinute || isInActiveWindow)) {
+      // If user opened the app well past the scheduled time (e.g. >5 mins later), mark as past/handled without blasting a notification
+      if (currentMins > item.targetMins + 5) {
         localStorage.setItem(sentKey, 'true');
-        console.log(`⚡ [LocalScheduler] Dispatching ${item.block} briefing for ${todayDateStr} at ${currentTimeStr}`);
+        continue;
+      }
+
+      // If the app is currently in the foreground (user is actively using it), don't show an OS popup
+      const isAppInForeground = typeof document !== 'undefined' && document.visibilityState === 'visible';
+
+      if (isExactTargetMinute && !isAppInForeground) {
+        localStorage.setItem(sentKey, 'true');
         testTimeBlockNotification(item.block);
       }
     }
@@ -398,27 +393,12 @@ export function initLocalNotificationScheduler(): void {
   if (typeof window === 'undefined') return;
 
   if (!localSchedulerInterval) {
-    // Run every 20 seconds
-    localSchedulerInterval = setInterval(evaluateAndDispatchScheduledAlerts, 20000);
+    // Check every 30 seconds for scheduled target time match
+    localSchedulerInterval = setInterval(evaluateAndDispatchScheduledAlerts, 30000);
   }
 
   if (!listenersInitialized) {
     listenersInitialized = true;
-
-    // Evaluate immediately when user returns to app, unlocks screen, or reconnects
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') {
-        evaluateAndDispatchScheduledAlerts();
-      }
-    });
-
-    window.addEventListener('focus', () => {
-      evaluateAndDispatchScheduledAlerts();
-    });
-
-    window.addEventListener('online', () => {
-      evaluateAndDispatchScheduledAlerts();
-    });
 
     // Listen for push subscription renewal from ServiceWorker
     if ('serviceWorker' in navigator) {
@@ -429,8 +409,6 @@ export function initLocalNotificationScheduler(): void {
       });
     }
   }
-
-  evaluateAndDispatchScheduledAlerts();
 }
 
 export interface CustomNotificationOptions extends NotificationOptions {

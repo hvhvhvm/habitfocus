@@ -11,7 +11,11 @@ interface CustomPreset {
 
 const DEFAULT_CUSTOM_PRESETS: CustomPreset[] = [
   { id: 'cp1', name: 'Protein Bar', grams: 20, icon: '🍫' },
-  { id: 'cp2', name: 'Peanut Butter (2 tbsp)', grams: 10, icon: '🥜' },
+  { id: 'cp2', name: 'Whey Protein Shake', grams: 25, icon: '🥛' },
+  { id: 'cp3', name: '3 Whole Eggs', grams: 18, icon: '🥚' },
+  { id: 'cp4', name: 'Chicken Breast (150g)', grams: 38, icon: '🍗' },
+  { id: 'cp5', name: 'Greek Yogurt (1 cup)', grams: 15, icon: '🥣' },
+  { id: 'cp6', name: 'Peanut Butter (2 tbsp)', grams: 8, icon: '🥜' },
 ];
 
 interface ProteinTrackerWidgetProps {
@@ -237,17 +241,18 @@ export const ProteinTrackerWidget: React.FC<ProteinTrackerWidgetProps> = ({ vari
         )}
 
         {/* Custom Presets / Quick Actions (Grid format) */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
           {customPresets.length > 0 ? (
-            customPresets.slice(0, 3).map((p) => (
+            customPresets.slice(0, 4).map((p) => (
               <button
                 key={p.id}
                 onClick={() => handleQuickAdd(p)}
                 className="bg-[#1D2922] hover:bg-[#F5A623]/20 active:scale-95 border border-[#26332C] hover:border-[#F5A623]/40 rounded-xl py-1.5 px-2 text-center transition-all cursor-pointer flex items-center justify-center gap-1 min-w-0"
+                title={`Quick log ${p.name} (+${p.grams}g)`}
               >
                 <span className="text-xs">{p.icon || '⚡'}</span>
                 <span className="font-space font-medium text-[11px] text-[#F4F6F5] truncate">
-                  {p.name.split(' ')[0]}
+                  {p.name.replace(/\s*\(.*?\)/g, '')}
                 </span>
                 <span className="font-mono-code text-[10px] text-[#F5A623] font-bold">
                   +{p.grams}g
@@ -260,7 +265,7 @@ export const ProteinTrackerWidget: React.FC<ProteinTrackerWidgetProps> = ({ vari
                 setActiveTab('custom');
                 setIsModalOpen(true);
               }}
-              className="col-span-3 bg-[#1D2922] hover:bg-[#212D26] border border-[#26332C] text-[#F5A623] font-mono-code text-xs py-2 px-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+              className="col-span-2 sm:col-span-4 bg-[#1D2922] hover:bg-[#212D26] border border-[#26332C] text-[#F5A623] font-mono-code text-xs py-2 px-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
             >
               <Plus className="w-3.5 h-3.5" /> Log Custom Protein Meal
             </button>

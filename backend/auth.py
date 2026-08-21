@@ -53,6 +53,11 @@ def check_and_perform_rollover(user: User, db: Session, local_date: str) -> bool
 
 def execute_rollover_logic(user: User, db: Session, days_passed: int, local_date: str):
     from backend.models import TaskLog, RoutineLog
+    from sqlalchemy.orm.attributes import flag_modified
+
+    # Double check to prevent race condition from parallel requests
+    if user.last_active_date == local_date:
+        return
 
     # Date being rolled over from (yesterday from user's perspective)
     rollover_date = user.last_active_date or local_date
@@ -77,7 +82,7 @@ def execute_rollover_logic(user: User, db: Session, days_passed: int, local_date
         user.streak_days = 0
 
     # 2. Advance the day number
-    user.day_number += days_passed
+    user.day_number += max(1, days_passed)
 
     # 3. Record TaskLog entries for completed tasks before resetting
     for task in completed_tasks:
@@ -120,11 +125,19 @@ def execute_rollover_logic(user: User, db: Session, days_passed: int, local_date
         routine.completed = False
         if routine.subtasks:
             updated_subtasks = []
-            for st in routine.subtasks:
-                st_copy = dict(st)
-                st_copy["completed"] = False
-                updated_subtasks.append(st_copy)
+            for idx, st in enumerate(routine.subtasks):
+                if isinstance(st, dict):
+                    st_copy = dict(st)
+                    st_copy["completed"] = False
+                    updated_subtasks.append(st_copy)
+                elif isinstance(st, str):
+                    updated_subtasks.append({
+                        "id": f"sub_{idx}",
+                        "name": st,
+                        "completed": False
+                    })
             routine.subtasks = updated_subtasks
+            flag_modified(routine, "subtasks")
 
     # 7. Tag protein logs with their date so history is preserved (do NOT delete them)
     untagged_protein_logs = db.query(ProteinLog).filter(
@@ -263,10 +276,10 @@ def seed_user_defaults(db: Session, user_id: str):
         total_steps=4,
         completed=False,
         subtasks=[
-            {"id": "st1", "text": "500ml Cold Water + Salt", "duration": "2 mins", "completed": False},
-            {"id": "st2", "text": "5-Min Sunlight Exposure", "duration": "5 mins", "completed": False},
-            {"id": "st3", "text": "Cold Shower", "duration": "5 mins", "completed": False},
-            {"id": "st4", "text": "Review Top 3 Goals", "duration": "3 mins", "completed": False},
+            {"id": "st1", "name": "500ml Cold Water + Salt", "text": "500ml Cold Water + Salt", "duration": "2 mins", "completed": False},
+            {"id": "st2", "name": "5-Min Sunlight Exposure", "text": "5-Min Sunlight Exposure", "duration": "5 mins", "completed": False},
+            {"id": "st3", "name": "Cold Shower", "text": "Cold Shower", "duration": "5 mins", "completed": False},
+            {"id": "st4", "name": "Review Top 3 Goals", "text": "Review Top 3 Goals", "duration": "3 mins", "completed": False},
         ]
     )
     db.add(r1)

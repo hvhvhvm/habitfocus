@@ -61,6 +61,14 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+export function getTodayDateString(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export function getCurrentTimeBlock(): TimeBlock {
   const hour = new Date().getHours();
   if (hour >= 6 && hour < 12) return 'morning';
@@ -117,52 +125,88 @@ const DEFAULT_ROUTINES: Routine[] = [
   },
 ];
 
+function getInitialStateWithDailyCheck() {
+  const today = getTodayDateString();
+  const savedDate = localStorage.getItem('lockin_last_active_date');
+  const isNewDay = Boolean(savedDate && savedDate !== today);
+
+  // 1. Pillars
+  let initialPillars = DEFAULT_PILLARS;
+  const savedPillars = localStorage.getItem('lockin_pillars');
+  if (savedPillars) {
+    try {
+      const parsed = JSON.parse(savedPillars);
+      if (Array.isArray(parsed) && parsed.length > 0) initialPillars = parsed;
+    } catch (e) {}
+  }
+
+  // 2. Tasks (reset completed on new day)
+  let initialTasks: Task[] = [];
+  const savedTasks = localStorage.getItem('lockin_tasks');
+  if (savedTasks) {
+    try {
+      const parsed = JSON.parse(savedTasks);
+      if (Array.isArray(parsed)) {
+        initialTasks = isNewDay
+          ? parsed.map((t: Task) => ({ ...t, completed: false, completedAt: null }))
+          : parsed;
+      }
+    } catch (e) {}
+  }
+
+  // 3. Routines (reset completed and subtasks on new day)
+  let initialRoutines = DEFAULT_ROUTINES;
+  const savedRoutines = localStorage.getItem('lockin_routines');
+  if (savedRoutines) {
+    try {
+      const parsed = JSON.parse(savedRoutines);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        initialRoutines = isNewDay
+          ? parsed.map((r: Routine) => ({
+              ...r,
+              completed: false,
+              subtasks: (r.subtasks || []).map((s) => ({ ...s, completed: false })),
+            }))
+          : parsed;
+      }
+    } catch (e) {}
+  }
+
+  // 4. Protein (reset daily logged on new day)
+  let initialProtein: ProteinLogData = { goalGrams: 160, totalLogged: 0, entries: [] };
+  const savedProtein = localStorage.getItem('lockin_protein');
+  if (savedProtein) {
+    try {
+      const parsed = JSON.parse(savedProtein);
+      const goal = typeof parsed?.goalGrams === 'number' ? parsed.goalGrams : 160;
+      if (isNewDay) {
+        initialProtein = { goalGrams: goal, totalLogged: 0, entries: [] };
+      } else if (parsed && typeof parsed.goalGrams === 'number') {
+        initialProtein = parsed;
+      }
+    } catch (e) {}
+  }
+
+  // Persist updated daily rollover state immediately
+  if (isNewDay || !savedDate) {
+    localStorage.setItem('lockin_last_active_date', today);
+    localStorage.setItem('lockin_tasks', JSON.stringify(initialTasks));
+    localStorage.setItem('lockin_routines', JSON.stringify(initialRoutines));
+    localStorage.setItem('lockin_protein', JSON.stringify(initialProtein));
+  }
+
+  return { initialPillars, initialTasks, initialRoutines, initialProtein };
+}
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, updateUserInContext } = useAuth();
 
-  const [pillars, setPillars] = useState<Pillar[]>(() => {
-    const saved = localStorage.getItem('lockin_pillars');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch (e) {}
-    }
-    return DEFAULT_PILLARS;
-  });
+  const [initialData] = useState(() => getInitialStateWithDailyCheck());
 
-  const [tasks, setTasks] = useState<Task[]>(() => {
-    const saved = localStorage.getItem('lockin_tasks');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      } catch (e) {}
-    }
-    return [];
-  });
-
-  const [routines, setRoutines] = useState<Routine[]>(() => {
-    const saved = localStorage.getItem('lockin_routines');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch (e) {}
-    }
-    return DEFAULT_ROUTINES;
-  });
-
-  const [proteinData, setProteinData] = useState<ProteinLogData | null>(() => {
-    const saved = localStorage.getItem('lockin_protein');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (parsed && typeof parsed.goalGrams === 'number') return parsed;
-      } catch (e) {}
-    }
-    return { goalGrams: 160, totalLogged: 0, entries: [] };
-  });
+  const [pillars, setPillars] = useState<Pillar[]>(initialData.initialPillars);
+  const [tasks, setTasks] = useState<Task[]>(initialData.initialTasks);
+  const [routines, setRoutines] = useState<Routine[]>(initialData.initialRoutines);
+  const [proteinData, setProteinData] = useState<ProteinLogData | null>(initialData.initialProtein);
   const [isLoadingData, setIsLoadingData] = useState<boolean>(false);
 
   const [activeTab, setActiveTab] = useState<'home' | 'pillars' | 'add' | 'routines' | 'progress' | 'profile'>('home');
@@ -321,6 +365,71 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       hasSyncedRef.current = false;
     }
   }, [isAuthenticated, refreshData, syncLocalDataToBackend]);
+
+  // Active runtime day-change detector (e.g. past midnight, device wake-up, tab visibility change)
+  const checkAndApplyDailyRollover = useCallback(() => {
+    const today = getTodayDateString();
+    const lastActiveDate = localStorage.getItem('lockin_last_active_date');
+
+    if (lastActiveDate && lastActiveDate !== today) {
+      // 1. Reset tasks completed status
+      setTasks((prev) => {
+        const reset = prev.map((t) => ({ ...t, completed: false, completedAt: null }));
+        localStorage.setItem('lockin_tasks', JSON.stringify(reset));
+        return reset;
+      });
+
+      // 2. Reset routines and routine subtasks
+      setRoutines((prev) => {
+        const reset = prev.map((r) => ({
+          ...r,
+          completed: false,
+          subtasks: (r.subtasks || []).map((s) => ({ ...s, completed: false })),
+        }));
+        localStorage.setItem('lockin_routines', JSON.stringify(reset));
+        return reset;
+      });
+
+      // 3. Reset daily protein progress to 0g
+      setProteinData((prev) => {
+        const reset: ProteinLogData = {
+          goalGrams: prev?.goalGrams || 160,
+          totalLogged: 0,
+          entries: [],
+        };
+        localStorage.setItem('lockin_protein', JSON.stringify(reset));
+        return reset;
+      });
+
+      localStorage.setItem('lockin_last_active_date', today);
+
+      // 4. If authenticated, trigger server refresh with the new X-Local-Date header
+      if (isAuthenticated) {
+        refreshData();
+      }
+    }
+  }, [isAuthenticated, refreshData]);
+
+  // Periodic (15s) and event-driven (tab visibility / window focus) daily reset checks
+  useEffect(() => {
+    checkAndApplyDailyRollover();
+    const intervalId = setInterval(checkAndApplyDailyRollover, 15000);
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        checkAndApplyDailyRollover();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+    };
+  }, [checkAndApplyDailyRollover]);
 
   // Derived state calculations
   const totalTasksCount = tasks.length;
@@ -763,22 +872,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const simulateNextDay = async () => {
     try {
-      const res = await api.simulateNextDay().catch(() => null);
-      if (res?.user) {
-        updateUserInContext(res.user);
+      // 1. Advance date in local storage
+      const now = new Date();
+      now.setDate(now.getDate() + 1);
+      const nextDateStr = now.toLocaleDateString('en-CA');
+      localStorage.setItem('lockin_last_active_date', nextDateStr);
+
+      // 2. Reset tasks locally
+      setTasks((prev) => {
+        const reset = prev.map((t) => ({ ...t, completed: false, completedAt: null }));
+        localStorage.setItem('lockin_tasks', JSON.stringify(reset));
+        return reset;
+      });
+
+      // 3. Reset routines and subtasks locally
+      setRoutines((prev) => {
+        const reset = prev.map((r) => ({
+          ...r,
+          completed: false,
+          subtasks: (r.subtasks || []).map((s) => ({ ...s, completed: false })),
+        }));
+        localStorage.setItem('lockin_routines', JSON.stringify(reset));
+        return reset;
+      });
+
+      // 4. Reset protein tracker locally
+      setProteinData((prev) => {
+        const reset = { goalGrams: prev?.goalGrams || 160, totalLogged: 0, entries: [] };
+        localStorage.setItem('lockin_protein', JSON.stringify(reset));
+        return reset;
+      });
+
+      // 5. If authenticated, trigger server rollover
+      if (isAuthenticated) {
+        const res = await api.simulateNextDay().catch(() => null);
+        if (res?.user) {
+          updateUserInContext(res.user);
+        }
+        if (res?.tasks && Array.isArray(res.tasks)) {
+          setTasks(res.tasks);
+          localStorage.setItem('lockin_tasks', JSON.stringify(res.tasks));
+        }
+        if (res?.routines && Array.isArray(res.routines)) {
+          setRoutines(res.routines);
+          localStorage.setItem('lockin_routines', JSON.stringify(res.routines));
+        }
+        if (res?.protein) {
+          const normalized = normalizeProteinData(res.protein);
+          setProteinData(normalized);
+          localStorage.setItem('lockin_protein', JSON.stringify(normalized));
+        }
       }
-      if (res?.tasks) {
-        setTasks(res.tasks);
-        localStorage.setItem('lockin_tasks', JSON.stringify(res.tasks));
-      }
-      if (res?.routines) {
-        setRoutines(res.routines);
-        localStorage.setItem('lockin_routines', JSON.stringify(res.routines));
-      }
-      // Reset protein data locally
-      const defaultProtein = { goalGrams: res?.user?.proteinGoal ?? 160, totalLogged: 0, entries: [] };
-      setProteinData(defaultProtein);
-      localStorage.setItem('lockin_protein', JSON.stringify(defaultProtein));
 
       confetti({
         particleCount: 80,
